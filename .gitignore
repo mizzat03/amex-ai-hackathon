@@ -1,0 +1,37 @@
+plan.md
+AMEX-Incident-Investigator-Planning-Context.md
+AMEX-Incident-Investigator-Decision-Register.md
+AMEX-Incident-Investigator-Master-Codex-Prompt.md
+AMEX-Incident-Investigator-Frontend-Plan.md
+frontend-backend-contract.md
+
+# Local secrets and runtime state
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Next.js / browser tests
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/test-results/
+frontend/playwright-report/
+
+# Local data and generated runtime artefacts
+data/
+*.db
+*.sqlite3
+logs/

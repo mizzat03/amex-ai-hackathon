@@ -1,0 +1,13 @@
+{
+  "status": "PENDING_CREDENTIALS",
+  "generated_at": "2026-08-27T17:22:17.480301+00:00",
+  "winner": null,
+  "missing_environment_variables": [
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "AMEX_EVAL_CLAUDE_MODEL",
+    "AMEX_EVAL_TERRA_MODEL"
+  ],
+  "case_count": 14,
+  "note": "No provider calls were made and no winner was inferred."
+}

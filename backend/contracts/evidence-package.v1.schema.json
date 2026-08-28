@@ -1,0 +1,456 @@
+{
+  "$defs": {
+    "CanonicalEvidenceItem": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/EvidenceCategory"
+        },
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "period": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvidencePeriod"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "provenance": {
+          "$ref": "#/$defs/EvidenceProvenance"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "source_references": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source References",
+          "type": "array"
+        },
+        "stable_logical_key": {
+          "title": "Stable Logical Key",
+          "type": "string"
+        },
+        "statement": {
+          "title": "Statement",
+          "type": "string"
+        },
+        "structured_value": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Structured Value"
+        },
+        "temporal_scope": {
+          "$ref": "#/$defs/TemporalScope"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "stable_logical_key",
+        "category",
+        "statement",
+        "temporal_scope",
+        "provenance",
+        "source_references"
+      ],
+      "title": "CanonicalEvidenceItem",
+      "type": "object"
+    },
+    "CanonicalHypothesis": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_type": {
+          "enum": [
+            "DEPLOYMENT",
+            "CONFIG_CHANGE",
+            "ROLLBACK"
+          ],
+          "title": "Candidate Type",
+          "type": "string"
+        },
+        "contradictory": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Contradictory",
+          "type": "array"
+        },
+        "evidence_tier": {
+          "$ref": "#/$defs/EvidenceTier"
+        },
+        "hypothesis_id": {
+          "title": "Hypothesis Id",
+          "type": "string"
+        },
+        "is_leading": {
+          "title": "Is Leading",
+          "type": "boolean"
+        },
+        "missing": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing",
+          "type": "array"
+        },
+        "not_applicable": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Not Applicable",
+          "type": "array"
+        },
+        "operational_event_id": {
+          "title": "Operational Event Id",
+          "type": "string"
+        },
+        "rank": {
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "supporting": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Supporting",
+          "type": "array"
+        }
+      },
+      "required": [
+        "hypothesis_id",
+        "rank",
+        "summary",
+        "candidate_type",
+        "evidence_tier",
+        "is_leading",
+        "operational_event_id",
+        "supporting",
+        "contradictory",
+        "missing",
+        "not_applicable"
+      ],
+      "title": "CanonicalHypothesis",
+      "type": "object"
+    },
+    "EvidenceCategory": {
+      "enum": [
+        "OBSERVED_FACT",
+        "DERIVED_FINDING",
+        "MISSING_EVIDENCE",
+        "LIMITATION"
+      ],
+      "title": "EvidenceCategory",
+      "type": "string"
+    },
+    "EvidenceCompleteness": {
+      "enum": [
+        "COMPLETE",
+        "PARTIAL",
+        "INVALID"
+      ],
+      "title": "EvidenceCompleteness",
+      "type": "string"
+    },
+    "EvidencePeriod": {
+      "additionalProperties": false,
+      "properties": {
+        "end_at": {
+          "format": "date-time",
+          "title": "End At",
+          "type": "string"
+        },
+        "start_at": {
+          "format": "date-time",
+          "title": "Start At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start_at",
+        "end_at"
+      ],
+      "title": "EvidencePeriod",
+      "type": "object"
+    },
+    "EvidenceProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "calculation_lineage": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Calculation Lineage",
+          "type": "array"
+        },
+        "rule_version": {
+          "title": "Rule Version",
+          "type": "string"
+        },
+        "source_module": {
+          "title": "Source Module",
+          "type": "string"
+        },
+        "source_record_id": {
+          "title": "Source Record Id",
+          "type": "string"
+        },
+        "source_version": {
+          "title": "Source Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_module",
+        "source_record_id",
+        "source_version",
+        "rule_version",
+        "calculation_lineage"
+      ],
+      "title": "EvidenceProvenance",
+      "type": "object"
+    },
+    "EvidenceTier": {
+      "enum": [
+        "STRONG_EVIDENCE",
+        "MODERATE_EVIDENCE",
+        "WEAK_EVIDENCE",
+        "INSUFFICIENT_EVIDENCE"
+      ],
+      "title": "EvidenceTier",
+      "type": "string"
+    },
+    "IncidentEvidenceInput": {
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/IncidentLifecycle"
+        },
+        "severity": {
+          "$ref": "#/$defs/IncidentSeverity"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "incident_id",
+        "lifecycle",
+        "severity",
+        "started_at",
+        "updated_at"
+      ],
+      "title": "IncidentEvidenceInput",
+      "type": "object"
+    },
+    "IncidentLifecycle": {
+      "enum": [
+        "WARMING_UP",
+        "HEALTHY",
+        "SUSPECTED",
+        "OPEN",
+        "RECOVERY_CANDIDATE",
+        "RESOLVED"
+      ],
+      "title": "IncidentLifecycle",
+      "type": "string"
+    },
+    "IncidentSeverity": {
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH"
+      ],
+      "title": "IncidentSeverity",
+      "type": "string"
+    },
+    "TemporalScope": {
+      "enum": [
+        "INCIDENT_SNAPSHOT",
+        "LIVE_STATUS",
+        "HISTORICAL_BASELINE"
+      ],
+      "title": "TemporalScope",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "anomaly_evaluation_id": {
+      "title": "Anomaly Evaluation Id",
+      "type": "string"
+    },
+    "baseline_period": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EvidencePeriod"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "builder_configuration_version": {
+      "title": "Builder Configuration Version",
+      "type": "string"
+    },
+    "citation_allowlist": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Citation Allowlist",
+      "type": "array"
+    },
+    "completeness": {
+      "$ref": "#/$defs/EvidenceCompleteness"
+    },
+    "current_period": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EvidencePeriod"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dimensional_analysis_version": {
+      "title": "Dimensional Analysis Version",
+      "type": "integer"
+    },
+    "evidence_catalogue": {
+      "items": {
+        "$ref": "#/$defs/CanonicalEvidenceItem"
+      },
+      "title": "Evidence Catalogue",
+      "type": "array"
+    },
+    "evidence_package_id": {
+      "title": "Evidence Package Id",
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "hypotheses": {
+      "items": {
+        "$ref": "#/$defs/CanonicalHypothesis"
+      },
+      "title": "Hypotheses",
+      "type": "array"
+    },
+    "incident_id": {
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "incident_snapshot": {
+      "$ref": "#/$defs/IncidentEvidenceInput"
+    },
+    "package_limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Package Limitations",
+      "type": "array"
+    },
+    "package_version": {
+      "minimum": 1,
+      "title": "Package Version",
+      "type": "integer"
+    },
+    "rca_result_version": {
+      "title": "Rca Result Version",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "evidence-package.v1",
+      "default": "evidence-package.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "validation_messages": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Validation Messages",
+      "type": "array"
+    }
+  },
+  "required": [
+    "incident_id",
+    "evidence_package_id",
+    "package_version",
+    "builder_configuration_version",
+    "generated_at",
+    "completeness",
+    "validation_messages",
+    "incident_snapshot",
+    "current_period",
+    "baseline_period",
+    "anomaly_evaluation_id",
+    "dimensional_analysis_version",
+    "rca_result_version",
+    "evidence_catalogue",
+    "hypotheses",
+    "package_limitations",
+    "citation_allowlist"
+  ],
+  "title": "EvidencePackage",
+  "type": "object"
+}

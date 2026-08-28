@@ -1,0 +1,1 @@
+"""Redis Stream ingestion adapters."""
