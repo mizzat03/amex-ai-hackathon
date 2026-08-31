@@ -105,62 +105,340 @@
         "title": "BaselineStatus",
         "type": "object"
       },
-      "ClaimType": {
-        "enum": [
-          "OBSERVED_FACT",
-          "DETERMINISTIC_FINDING",
-          "COPILOT_INFERENCE",
-          "RUNBOOK_GUIDANCE"
-        ],
-        "title": "ClaimType",
-        "type": "string"
-      },
-      "CopilotAssessment": {
-        "enum": [
-          "SUPPORTED",
-          "WEAKENED",
-          "CONFLICTING",
-          "INCONCLUSIVE"
-        ],
-        "title": "CopilotAssessment",
-        "type": "string"
-      },
-      "CopilotClaim": {
+      "CanonicalCopilotMessagePage": {
         "additionalProperties": false,
         "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CopilotMessage"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CanonicalCopilotMessagePage",
+        "type": "object"
+      },
+      "CopilotAnswerContent": {
+        "additionalProperties": false,
+        "properties": {
+          "answer_kind": {
+            "enum": [
+              "initial_report",
+              "follow_up"
+            ],
+            "title": "Answer Kind",
+            "type": "string"
+          },
           "citations": {
             "items": {
-              "anyOf": [
+              "discriminator": {
+                "mapping": {
+                  "EVIDENCE": "#/components/schemas/CopilotEvidenceCitation",
+                  "RUNBOOK": "#/components/schemas/CopilotRunbookCitation"
+                },
+                "propertyName": "citation_type"
+              },
+              "oneOf": [
                 {
-                  "$ref": "#/components/schemas/EvidenceCitationRef"
+                  "$ref": "#/components/schemas/CopilotEvidenceCitation"
                 },
                 {
-                  "$ref": "#/components/schemas/RunbookCitationRef"
+                  "$ref": "#/components/schemas/CopilotRunbookCitation"
                 }
               ]
             },
+            "maxItems": 24,
             "title": "Citations",
             "type": "array"
           },
-          "claim_id": {
-            "title": "Claim Id",
+          "confidence": {
+            "enum": [
+              "LOW",
+              "MODERATE",
+              "HIGH"
+            ],
+            "title": "Confidence",
             "type": "string"
           },
-          "claim_type": {
-            "$ref": "#/components/schemas/ClaimType"
+          "contradictory_points": {
+            "items": {
+              "$ref": "#/components/schemas/CopilotEvidencePoint"
+            },
+            "maxItems": 12,
+            "title": "Contradictory Points",
+            "type": "array"
+          },
+          "direct_answer": {
+            "maxLength": 2400,
+            "minLength": 1,
+            "title": "Direct Answer",
+            "type": "string"
+          },
+          "headline": {
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Headline",
+            "type": "string"
+          },
+          "recommended_checks": {
+            "items": {
+              "$ref": "#/components/schemas/CopilotRecommendedCheck"
+            },
+            "maxItems": 8,
+            "title": "Recommended Checks",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": "copilot-answer.v2",
+            "default": "copilot-answer.v2",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "suggested_questions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Suggested Questions",
+            "type": "array"
+          },
+          "supporting_points": {
+            "items": {
+              "$ref": "#/components/schemas/CopilotEvidencePoint"
+            },
+            "maxItems": 12,
+            "title": "Supporting Points",
+            "type": "array"
+          },
+          "type": {
+            "const": "COPILOT_ANSWER",
+            "default": "COPILOT_ANSWER",
+            "title": "Type",
+            "type": "string"
+          },
+          "unknown_points": {
+            "items": {
+              "$ref": "#/components/schemas/CopilotEvidencePoint"
+            },
+            "maxItems": 12,
+            "title": "Unknown Points",
+            "type": "array"
+          },
+          "validation_status": {
+            "const": "VALIDATED",
+            "default": "VALIDATED",
+            "title": "Validation Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "answer_kind",
+          "headline",
+          "direct_answer",
+          "confidence"
+        ],
+        "title": "CopilotAnswerContent",
+        "type": "object"
+      },
+      "CopilotCitationTechnicalDetails": {
+        "additionalProperties": false,
+        "properties": {
+          "calculation_lineage": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Calculation Lineage",
+            "type": "array"
+          },
+          "calculation_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculation Method"
+          },
+          "evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Id"
+          },
+          "source_module": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Module"
+          },
+          "source_references": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source References",
+            "type": "array"
+          },
+          "source_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Version"
+          }
+        },
+        "title": "CopilotCitationTechnicalDetails",
+        "type": "object"
+      },
+      "CopilotEvidenceCitation": {
+        "additionalProperties": false,
+        "properties": {
+          "citation_number": {
+            "minimum": 1.0,
+            "title": "Citation Number",
+            "type": "integer"
+          },
+          "citation_type": {
+            "const": "EVIDENCE",
+            "default": "EVIDENCE",
+            "title": "Citation Type",
+            "type": "string"
+          },
+          "evidence_package_id": {
+            "title": "Evidence Package Id",
+            "type": "string"
+          },
+          "evidence_package_version": {
+            "minimum": 1.0,
+            "title": "Evidence Package Version",
+            "type": "integer"
+          },
+          "period": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Period"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance_label": {
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Provenance Label",
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScopedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "statement": {
+            "maxLength": 1600,
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "structured_value": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structured Value"
+          },
+          "technical_details": {
+            "$ref": "#/components/schemas/CopilotCitationTechnicalDetails"
+          },
+          "temporal_scope": {
+            "$ref": "#/components/schemas/TemporalScope"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "citation_number",
+          "statement",
+          "temporal_scope",
+          "provenance_label",
+          "evidence_package_id",
+          "evidence_package_version",
+          "technical_details"
+        ],
+        "title": "CopilotEvidenceCitation",
+        "type": "object"
+      },
+      "CopilotEvidencePoint": {
+        "additionalProperties": false,
+        "properties": {
+          "citation_numbers": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 8,
+            "title": "Citation Numbers",
+            "type": "array"
           },
           "text": {
+            "maxLength": 1600,
+            "minLength": 1,
             "title": "Text",
             "type": "string"
           }
         },
         "required": [
-          "claim_id",
-          "claim_type",
-          "text",
-          "citations"
+          "text"
         ],
-        "title": "CopilotClaim",
+        "title": "CopilotEvidencePoint",
         "type": "object"
       },
       "CopilotFeedbackRequest": {
@@ -223,6 +501,17 @@
               }
             ]
           },
+          "incident_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Incident Id"
+          },
           "interaction_id": {
             "title": "Interaction Id",
             "type": "string"
@@ -272,6 +561,17 @@
             "title": "Status",
             "type": "string"
           },
+          "thread_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          },
           "validated_message_id": {
             "anyOf": [
               {
@@ -292,17 +592,10 @@
         "title": "CopilotInteractionView",
         "type": "object"
       },
-      "CopilotMessagePage": {
+      "CopilotMessage": {
         "additionalProperties": false,
         "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ValidatedCopilotMessage"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "next_cursor": {
+          "client_request_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -311,52 +604,160 @@
                 "type": "null"
               }
             ],
-            "title": "Next Cursor"
+            "title": "Client Request Id"
+          },
+          "content": {
+            "discriminator": {
+              "mapping": {
+                "COPILOT_ANSWER": "#/components/schemas/CopilotAnswerContent",
+                "DETERMINISTIC_FALLBACK": "#/components/schemas/DeterministicFallbackContent",
+                "EVIDENCE_VERSION_NOTICE": "#/components/schemas/EvidenceVersionNoticeContent",
+                "LIFECYCLE_NOTICE": "#/components/schemas/LifecycleNoticeContent",
+                "USER_QUESTION": "#/components/schemas/UserQuestionContent"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UserQuestionContent"
+              },
+              {
+                "$ref": "#/components/schemas/CopilotAnswerContent"
+              },
+              {
+                "$ref": "#/components/schemas/DeterministicFallbackContent"
+              },
+              {
+                "$ref": "#/components/schemas/EvidenceVersionNoticeContent"
+              },
+              {
+                "$ref": "#/components/schemas/LifecycleNoticeContent"
+              }
+            ],
+            "title": "Content"
+          },
+          "content_type": {
+            "enum": [
+              "USER_QUESTION",
+              "COPILOT_ANSWER",
+              "DETERMINISTIC_FALLBACK",
+              "EVIDENCE_VERSION_NOTICE",
+              "LIFECYCLE_NOTICE"
+            ],
+            "title": "Content Type",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_package_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Package Id"
+          },
+          "evidence_package_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Package Version"
+          },
+          "incident_id": {
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "interaction_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interaction Id"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "response_to_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response To Message Id"
+          },
+          "role": {
+            "enum": [
+              "USER",
+              "ASSISTANT",
+              "SYSTEM"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "sequence": {
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
           }
         },
         "required": [
-          "items"
+          "message_id",
+          "thread_id",
+          "incident_id",
+          "sequence",
+          "role",
+          "content_type",
+          "content",
+          "created_at"
         ],
-        "title": "CopilotMessagePage",
+        "title": "CopilotMessage",
         "type": "object"
       },
-      "CopilotRecommendation": {
+      "CopilotRecommendedCheck": {
         "additionalProperties": false,
         "properties": {
-          "action_type": {
-            "enum": [
-              "VERIFY",
-              "CONTAIN",
-              "REMEDIATE",
-              "MONITOR"
-            ],
-            "title": "Action Type",
-            "type": "string"
-          },
-          "citations": {
+          "citation_numbers": {
             "items": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/EvidenceCitationRef"
-                },
-                {
-                  "$ref": "#/components/schemas/RunbookCitationRef"
-                }
-              ]
+              "type": "integer"
             },
-            "title": "Citations",
+            "maxItems": 8,
+            "title": "Citation Numbers",
             "type": "array"
           },
           "expected_signal": {
+            "maxLength": 1200,
+            "minLength": 1,
             "title": "Expected Signal",
             "type": "string"
           },
           "rationale": {
+            "maxLength": 1200,
+            "minLength": 1,
             "title": "Rationale",
-            "type": "string"
-          },
-          "recommendation_id": {
-            "title": "Recommendation Id",
             "type": "string"
           },
           "requires_human_approval": {
@@ -365,30 +766,156 @@
             "title": "Requires Human Approval",
             "type": "boolean"
           },
-          "risk_level": {
+          "risk": {
             "enum": [
               "LOW",
               "MEDIUM",
               "HIGH"
             ],
-            "title": "Risk Level",
+            "title": "Risk",
             "type": "string"
           },
           "title": {
+            "maxLength": 400,
+            "minLength": 1,
             "title": "Title",
             "type": "string"
           }
         },
         "required": [
-          "recommendation_id",
-          "action_type",
           "title",
           "rationale",
           "expected_signal",
-          "risk_level",
-          "citations"
+          "risk"
         ],
-        "title": "CopilotRecommendation",
+        "title": "CopilotRecommendedCheck",
+        "type": "object"
+      },
+      "CopilotRunbookCitation": {
+        "additionalProperties": false,
+        "properties": {
+          "approved_guidance_excerpt": {
+            "maxLength": 1600,
+            "minLength": 1,
+            "title": "Approved Guidance Excerpt",
+            "type": "string"
+          },
+          "citation_number": {
+            "minimum": 1.0,
+            "title": "Citation Number",
+            "type": "integer"
+          },
+          "citation_type": {
+            "const": "RUNBOOK",
+            "default": "RUNBOOK",
+            "title": "Citation Type",
+            "type": "string"
+          },
+          "guidance_not_incident_proof": {
+            "const": true,
+            "default": true,
+            "title": "Guidance Not Incident Proof",
+            "type": "boolean"
+          },
+          "runbook_id": {
+            "title": "Runbook Id",
+            "type": "string"
+          },
+          "runbook_version": {
+            "title": "Runbook Version",
+            "type": "string"
+          },
+          "section_id": {
+            "title": "Section Id",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "citation_number",
+          "title",
+          "approved_guidance_excerpt",
+          "runbook_id",
+          "runbook_version",
+          "section_id"
+        ],
+        "title": "CopilotRunbookCitation",
+        "type": "object"
+      },
+      "CopilotThread": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "incident_id": {
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "latest_evidence_package_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Evidence Package Id"
+          },
+          "latest_evidence_package_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Evidence Package Version"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "incident_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "CopilotThread",
+        "type": "object"
+      },
+      "CopilotThreadResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "messages": {
+            "$ref": "#/components/schemas/CanonicalCopilotMessagePage"
+          },
+          "thread": {
+            "$ref": "#/components/schemas/CopilotThread"
+          }
+        },
+        "required": [
+          "thread",
+          "messages"
+        ],
+        "title": "CopilotThreadResponse",
         "type": "object"
       },
       "CopilotThreadSummary": {
@@ -497,6 +1024,7 @@
               "provider_disabled",
               "provider_timeout",
               "provider_http_failure",
+              "provider_incomplete",
               "schema_validation_failed",
               "citation_validation_failed",
               "policy_validation_failed",
@@ -518,6 +1046,56 @@
           "summary"
         ],
         "title": "DeterministicFallback",
+        "type": "object"
+      },
+      "DeterministicFallbackContent": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "const": "Deterministic fallback",
+            "default": "Deterministic fallback",
+            "title": "Label",
+            "type": "string"
+          },
+          "reason_code": {
+            "enum": [
+              "provider_disabled",
+              "provider_timeout",
+              "provider_http_failure",
+              "provider_incomplete",
+              "schema_validation_failed",
+              "citation_validation_failed",
+              "policy_validation_failed",
+              "circuit_open",
+              "evidence_unavailable",
+              "unexpected_internal_failure"
+            ],
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "retry_eligible": {
+            "title": "Retry Eligible",
+            "type": "boolean"
+          },
+          "summary": {
+            "maxLength": 1200,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "type": {
+            "const": "DETERMINISTIC_FALLBACK",
+            "default": "DETERMINISTIC_FALLBACK",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "reason_code",
+          "retry_eligible"
+        ],
+        "title": "DeterministicFallbackContent",
         "type": "object"
       },
       "ErrorDetail": {
@@ -915,6 +1493,50 @@
         ],
         "title": "EvidenceTier",
         "type": "string"
+      },
+      "EvidenceVersionNoticeContent": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_package_id": {
+            "title": "Evidence Package Id",
+            "type": "string"
+          },
+          "evidence_package_version": {
+            "minimum": 1.0,
+            "title": "Evidence Package Version",
+            "type": "integer"
+          },
+          "previous_evidence_package_id": {
+            "title": "Previous Evidence Package Id",
+            "type": "string"
+          },
+          "previous_evidence_package_version": {
+            "minimum": 1.0,
+            "title": "Previous Evidence Package Version",
+            "type": "integer"
+          },
+          "summary": {
+            "maxLength": 800,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "type": {
+            "const": "EVIDENCE_VERSION_NOTICE",
+            "default": "EVIDENCE_VERSION_NOTICE",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "previous_evidence_package_id",
+          "previous_evidence_package_version",
+          "evidence_package_id",
+          "evidence_package_version",
+          "summary"
+        ],
+        "title": "EvidenceVersionNoticeContent",
+        "type": "object"
       },
       "HealthResponse": {
         "additionalProperties": false,
@@ -1616,6 +2238,38 @@
         "title": "LeadingHypothesisSummary",
         "type": "object"
       },
+      "LifecycleNoticeContent": {
+        "additionalProperties": false,
+        "properties": {
+          "lifecycle": {
+            "enum": [
+              "OPEN",
+              "RECOVERY_CANDIDATE",
+              "RESOLVED"
+            ],
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 800,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "type": {
+            "const": "LIFECYCLE_NOTICE",
+            "default": "LIFECYCLE_NOTICE",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lifecycle",
+          "summary"
+        ],
+        "title": "LifecycleNoticeContent",
+        "type": "object"
+      },
       "MetricComparison": {
         "additionalProperties": false,
         "properties": {
@@ -2231,6 +2885,84 @@
         "title": "SimulationStatus",
         "type": "object"
       },
+      "SubmitCopilotMessageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "client_request_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Client Request Id",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          },
+          "referenced_message_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Referenced Message Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "question",
+          "client_request_id"
+        ],
+        "title": "SubmitCopilotMessageRequest",
+        "type": "object"
+      },
+      "SubmitCopilotMessageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_at": {
+            "format": "date-time",
+            "title": "Accepted At",
+            "type": "string"
+          },
+          "evidence_package_id": {
+            "title": "Evidence Package Id",
+            "type": "string"
+          },
+          "evidence_package_version": {
+            "minimum": 1.0,
+            "title": "Evidence Package Version",
+            "type": "integer"
+          },
+          "interaction_id": {
+            "title": "Interaction Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "QUEUED",
+            "default": "QUEUED",
+            "title": "Status",
+            "type": "string"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "user_message_id": {
+            "title": "User Message Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "interaction_id",
+          "thread_id",
+          "user_message_id",
+          "accepted_at",
+          "evidence_package_id",
+          "evidence_package_version"
+        ],
+        "title": "SubmitCopilotMessageResponse",
+        "type": "object"
+      },
       "SubmitCopilotQueryRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2388,122 +3120,34 @@
         "title": "TemporalScope",
         "type": "string"
       },
-      "ValidatedCopilotMessage": {
+      "UserQuestionContent": {
         "additionalProperties": false,
         "properties": {
-          "assessment": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/CopilotAssessment"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "claims": {
-            "items": {
-              "$ref": "#/components/schemas/CopilotClaim"
-            },
-            "title": "Claims",
-            "type": "array"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
+          "question": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Question",
             "type": "string"
           },
-          "evidence_package_id": {
-            "title": "Evidence Package Id",
-            "type": "string"
-          },
-          "evidence_package_version": {
-            "minimum": 1.0,
-            "title": "Evidence Package Version",
-            "type": "integer"
-          },
-          "incident_id": {
-            "title": "Incident Id",
-            "type": "string"
-          },
-          "interaction_id": {
-            "title": "Interaction Id",
-            "type": "string"
-          },
-          "limitations": {
+          "referenced_message_ids": {
             "items": {
               "type": "string"
             },
-            "title": "Limitations",
+            "maxItems": 8,
+            "title": "Referenced Message Ids",
             "type": "array"
           },
-          "message_id": {
-            "title": "Message Id",
+          "type": {
+            "const": "USER_QUESTION",
+            "default": "USER_QUESTION",
+            "title": "Type",
             "type": "string"
-          },
-          "mode": {
-            "enum": [
-              "INITIAL_ANALYSIS",
-              "FOLLOW_UP"
-            ],
-            "title": "Mode",
-            "type": "string"
-          },
-          "recommendations": {
-            "items": {
-              "$ref": "#/components/schemas/CopilotRecommendation"
-            },
-            "title": "Recommendations",
-            "type": "array"
-          },
-          "role": {
-            "const": "ASSISTANT",
-            "default": "ASSISTANT",
-            "title": "Role",
-            "type": "string"
-          },
-          "status": {
-            "enum": [
-              "VALIDATED",
-              "DETERMINISTIC_FALLBACK"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "suggested_questions": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Suggested Questions",
-            "type": "array"
-          },
-          "summary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Summary"
           }
         },
         "required": [
-          "incident_id",
-          "evidence_package_id",
-          "evidence_package_version",
-          "message_id",
-          "interaction_id",
-          "mode",
-          "status",
-          "created_at",
-          "claims",
-          "recommendations",
-          "limitations",
-          "suggested_questions"
+          "question"
         ],
-        "title": "ValidatedCopilotMessage",
+        "title": "UserQuestionContent",
         "type": "object"
       }
     }
@@ -2962,6 +3606,7 @@
     },
     "/api/v1/incidents/{incident_id}/copilot/initial-report": {
       "post": {
+        "deprecated": true,
         "operationId": "request_initial_copilot_report_api_v1_incidents__incident_id__copilot_initial_report_post",
         "parameters": [
           {
@@ -3260,7 +3905,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CopilotMessagePage"
+                  "$ref": "#/components/schemas/CanonicalCopilotMessagePage"
                 }
               }
             },
@@ -3318,10 +3963,196 @@
           }
         },
         "summary": "Copilot Messages"
+      },
+      "post": {
+        "operationId": "submit_copilot_message_api_v1_incidents__incident_id__copilot_messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitCopilotMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitCopilotMessageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Invalid command"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Version or state conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Dependency unavailable"
+          }
+        },
+        "summary": "Submit Copilot Message"
+      }
+    },
+    "/api/v1/incidents/{incident_id}/copilot/messages/{message_id}/feedback": {
+      "post": {
+        "operationId": "submit_incident_copilot_feedback_api_v1_incidents__incident_id__copilot_messages__message_id__feedback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopilotFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Invalid command"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Version or state conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Dependency unavailable"
+          }
+        },
+        "summary": "Submit Incident Copilot Feedback"
       }
     },
     "/api/v1/incidents/{incident_id}/copilot/queries": {
       "post": {
+        "deprecated": true,
         "operationId": "submit_copilot_query_api_v1_incidents__incident_id__copilot_queries_post",
         "parameters": [
           {
@@ -3407,6 +4238,85 @@
           }
         },
         "summary": "Submit Copilot Query"
+      }
+    },
+    "/api/v1/incidents/{incident_id}/copilot/thread": {
+      "get": {
+        "operationId": "copilot_thread_api_v1_incidents__incident_id__copilot_thread_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopilotThreadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Invalid command"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Version or state conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Dependency unavailable"
+          }
+        },
+        "summary": "Copilot Thread"
       }
     },
     "/api/v1/incidents/{incident_id}/evidence": {

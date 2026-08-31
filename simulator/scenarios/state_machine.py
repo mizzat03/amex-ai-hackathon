@@ -145,3 +145,12 @@ class SimulatorStateMachine:
         self._message = "Synthetic demo data reset complete"
         self._command_results.clear()
         return self.status()
+
+    def fail_reset(self) -> SimulationStatus:
+        if self._state is not SimulationState.RESETTING:
+            raise InvalidSimulationAction("reset can fail only from RESETTING")
+        self._state = SimulationState.ERROR
+        self._baseline_ready = False
+        self._message = "Synthetic demo reset did not complete; stop or retry reset"
+        self._command_results.clear()
+        return self.status()

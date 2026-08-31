@@ -22,6 +22,14 @@ async def seed_incident_fixture(store: RuntimeStore) -> None:
     await store.put_resource(
         "evidence", projection.evidence.incident_id, projection.evidence.model_dump(mode="json")
     )
+    await store.save_evidence_package(
+        {
+            **projection.evidence.model_dump(mode="json"),
+            "package_version": projection.evidence.evidence_package_version,
+            "schema_version": "evidence-package.v1",
+            "builder_configuration_version": "demo-config.v1",
+        }
+    )
     await store.put_resource(
         "copilot_messages",
         projection.workspace.incident_id,

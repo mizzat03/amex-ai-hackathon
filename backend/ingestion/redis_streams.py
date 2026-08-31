@@ -47,7 +47,7 @@ class RedisStreamPublisher:
     async def reset_synthetic_demo_data(self) -> int:
         """Delete only application keys in the explicit synthetic namespace."""
         keys = [key async for key in self._client.scan_iter(match="amex:synthetic:*")]
-        return await self._client.delete(*keys) if keys else 0
+        return await self._client.unlink(*keys) if keys else 0
 
 
 class RedisStreamConsumer:

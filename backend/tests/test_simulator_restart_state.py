@@ -1,8 +1,11 @@
 import asyncio
 from datetime import UTC, datetime
 
+import pytest
+from redis.exceptions import BusyLoadingError
+
 from backend.config.settings import Settings
-from backend.contracts.enums import SimulationState
+from backend.contracts.enums import SimulationAction, SimulationState
 from simulator.service import SimulatorService
 
 
@@ -21,6 +24,19 @@ class FakeStateRedis:
         return True
 
 
+class LoadingStateRedis(FakeStateRedis):
+    def __init__(self, failures: int) -> None:
+        super().__init__()
+        self.failures = failures
+        self.get_attempts = 0
+
+    async def get(self, key: str) -> str | None:
+        self.get_attempts += 1
+        if self.get_attempts <= self.failures:
+            raise BusyLoadingError("Redis is loading the dataset in memory")
+        return await super().get(key)
+
+
 class FakePublisher:
     def __init__(self) -> None:
         self.payment_batches = []
@@ -34,6 +50,11 @@ class FakePublisher:
 
     async def reset_synthetic_demo_data(self):
         return 0
+
+
+class CancelledResetPublisher(FakePublisher):
+    async def reset_synthetic_demo_data(self):
+        raise asyncio.CancelledError
 
 
 def test_simulator_restores_authoritative_state_after_process_restart() -> None:
@@ -55,6 +76,68 @@ def test_simulator_restores_authoritative_state_after_process_restart() -> None:
 
         assert (await restarted.status()).state is SimulationState.PREWARMING
         assert (await restarted.status()).started_at == datetime(2026, 8, 28, tzinfo=UTC)
+
+    asyncio.run(exercise())
+
+
+def test_simulator_initialization_retries_while_redis_is_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        delays: list[float] = []
+
+        async def no_wait(delay: float) -> None:
+            delays.append(delay)
+
+        monkeypatch.setattr(asyncio, "sleep", no_wait)
+        client = LoadingStateRedis(failures=2)
+        service = SimulatorService(client, Settings())  # type: ignore[arg-type]
+
+        await service.initialize()
+
+        assert client.get_attempts == 3
+        assert delays == [0.25, 0.5]
+        assert SimulatorService.STATE_KEY in client.values
+
+    asyncio.run(exercise())
+
+
+def test_cancelled_reset_cleanup_leaves_simulator_recoverable() -> None:
+    async def exercise() -> None:
+        client = FakeStateRedis()
+        service = SimulatorService(client, Settings())  # type: ignore[arg-type]
+        service.publisher = CancelledResetPublisher()  # type: ignore[assignment]
+        await service.initialize()
+
+        with pytest.raises(asyncio.CancelledError):
+            await service.reset("cancelled-reset", "RESET_SYNTHETIC_DEMO")
+
+        status = await service.status()
+        assert status.state is SimulationState.ERROR
+        assert status.available_actions == [SimulationAction.STOP, SimulationAction.RESET]
+
+        service.publisher = FakePublisher()  # type: ignore[assignment]
+        retried = await service.reset("cancelled-reset", "RESET_SYNTHETIC_DEMO")
+        assert retried.state is SimulationState.STOPPED
+
+    asyncio.run(exercise())
+
+
+def test_simulator_initialization_stops_after_bounded_redis_loading_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        async def no_wait(_delay: float) -> None:
+            return None
+
+        monkeypatch.setattr(asyncio, "sleep", no_wait)
+        client = LoadingStateRedis(failures=100)
+        service = SimulatorService(client, Settings())  # type: ignore[arg-type]
+
+        with pytest.raises(BusyLoadingError):
+            await service.initialize()
+
+        assert 1 < client.get_attempts < client.failures
 
     asyncio.run(exercise())
 

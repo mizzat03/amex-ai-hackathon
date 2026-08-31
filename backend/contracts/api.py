@@ -1,7 +1,7 @@
 """Frozen frontend-facing models from frontend-backend-contract.md v1.1."""
 
 from datetime import datetime
-from typing import Any, Generic, Literal, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from pydantic import Field, model_validator
 
@@ -331,6 +331,228 @@ class EvidenceDetailResponse(EvidenceVersionRef):
     source_references: list[str] = Field(default_factory=list)
 
 
+class CopilotCitationTechnicalDetails(ContractModel):
+    evidence_id: str | None = None
+    source_module: str | None = None
+    source_version: str | None = None
+    calculation_method: str | None = None
+    calculation_lineage: list[str] = Field(default_factory=list)
+    source_references: list[str] = Field(default_factory=list)
+
+
+class CopilotEvidenceCitation(ContractModel):
+    citation_type: Literal["EVIDENCE"] = "EVIDENCE"
+    citation_number: int = Field(ge=1)
+    statement: str = Field(min_length=1, max_length=1600)
+    structured_value: dict[str, Any] | None = None
+    unit: str | None = None
+    scope: ScopedValue | None = None
+    period: Period | None = None
+    temporal_scope: TemporalScope
+    provenance_label: str = Field(min_length=1, max_length=400)
+    evidence_package_id: str
+    evidence_package_version: int = Field(ge=1)
+    technical_details: CopilotCitationTechnicalDetails
+
+
+class CopilotRunbookCitation(ContractModel):
+    citation_type: Literal["RUNBOOK"] = "RUNBOOK"
+    citation_number: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=400)
+    approved_guidance_excerpt: str = Field(min_length=1, max_length=1600)
+    runbook_id: str
+    runbook_version: str
+    section_id: str
+    guidance_not_incident_proof: Literal[True] = True
+
+
+CopilotHydratedCitation = Annotated[
+    CopilotEvidenceCitation | CopilotRunbookCitation,
+    Field(discriminator="citation_type"),
+]
+
+
+class CopilotEvidencePoint(ContractModel):
+    text: str = Field(min_length=1, max_length=1600)
+    citation_numbers: list[int] = Field(default_factory=list, max_length=8)
+
+
+class CopilotRecommendedCheck(ContractModel):
+    title: str = Field(min_length=1, max_length=400)
+    rationale: str = Field(min_length=1, max_length=1200)
+    expected_signal: str = Field(min_length=1, max_length=1200)
+    risk: Literal["LOW", "MEDIUM", "HIGH"]
+    requires_human_approval: Literal[True] = True
+    citation_numbers: list[int] = Field(default_factory=list, max_length=8)
+
+
+class UserQuestionContent(ContractModel):
+    type: Literal["USER_QUESTION"] = "USER_QUESTION"
+    question: str = Field(min_length=1, max_length=2000)
+    referenced_message_ids: list[str] = Field(default_factory=list, max_length=8)
+
+
+class CopilotAnswerContent(ContractModel):
+    type: Literal["COPILOT_ANSWER"] = "COPILOT_ANSWER"
+    schema_version: Literal["copilot-answer.v2"] = "copilot-answer.v2"
+    answer_kind: Literal["initial_report", "follow_up"]
+    headline: str = Field(min_length=1, max_length=400)
+    direct_answer: str = Field(min_length=1, max_length=2400)
+    confidence: Literal["LOW", "MODERATE", "HIGH"]
+    supporting_points: list[CopilotEvidencePoint] = Field(default_factory=list, max_length=12)
+    contradictory_points: list[CopilotEvidencePoint] = Field(default_factory=list, max_length=12)
+    unknown_points: list[CopilotEvidencePoint] = Field(default_factory=list, max_length=12)
+    recommended_checks: list[CopilotRecommendedCheck] = Field(default_factory=list, max_length=8)
+    citations: list[CopilotHydratedCitation] = Field(default_factory=list, max_length=24)
+    suggested_questions: list[str] = Field(default_factory=list, max_length=8)
+    validation_status: Literal["VALIDATED"] = "VALIDATED"
+
+    @model_validator(mode="after")
+    def validate_citation_numbers(self) -> "CopilotAnswerContent":
+        numbers = [citation.citation_number for citation in self.citations]
+        if numbers != list(range(1, len(numbers) + 1)):
+            raise ValueError("citations must be numbered consecutively from one")
+        allowed = set(numbers)
+        referenced = {
+            number
+            for point in (
+                *self.supporting_points,
+                *self.contradictory_points,
+                *self.unknown_points,
+            )
+            for number in point.citation_numbers
+        }
+        referenced.update(
+            number
+            for check in self.recommended_checks
+            for number in check.citation_numbers
+        )
+        if not referenced <= allowed:
+            raise ValueError("answer content references an unknown citation number")
+        return self
+
+
+class DeterministicFallbackContent(ContractModel):
+    type: Literal["DETERMINISTIC_FALLBACK"] = "DETERMINISTIC_FALLBACK"
+    label: Literal["Deterministic fallback"] = "Deterministic fallback"
+    summary: str = Field(min_length=1, max_length=1200)
+    reason_code: Literal[
+        "provider_disabled",
+        "provider_timeout",
+        "provider_http_failure",
+        "provider_incomplete",
+        "schema_validation_failed",
+        "citation_validation_failed",
+        "policy_validation_failed",
+        "circuit_open",
+        "evidence_unavailable",
+        "unexpected_internal_failure",
+    ]
+    retry_eligible: bool
+
+
+class EvidenceVersionNoticeContent(ContractModel):
+    type: Literal["EVIDENCE_VERSION_NOTICE"] = "EVIDENCE_VERSION_NOTICE"
+    previous_evidence_package_id: str
+    previous_evidence_package_version: int = Field(ge=1)
+    evidence_package_id: str
+    evidence_package_version: int = Field(ge=1)
+    summary: str = Field(min_length=1, max_length=800)
+
+
+class LifecycleNoticeContent(ContractModel):
+    type: Literal["LIFECYCLE_NOTICE"] = "LIFECYCLE_NOTICE"
+    lifecycle: Literal["OPEN", "RECOVERY_CANDIDATE", "RESOLVED"]
+    summary: str = Field(min_length=1, max_length=800)
+
+
+CopilotMessageContent = Annotated[
+    UserQuestionContent
+    | CopilotAnswerContent
+    | DeterministicFallbackContent
+    | EvidenceVersionNoticeContent
+    | LifecycleNoticeContent,
+    Field(discriminator="type"),
+]
+
+
+class CopilotMessage(ContractModel):
+    message_id: str
+    thread_id: str
+    incident_id: str
+    sequence: int = Field(ge=1)
+    role: Literal["USER", "ASSISTANT", "SYSTEM"]
+    content_type: Literal[
+        "USER_QUESTION",
+        "COPILOT_ANSWER",
+        "DETERMINISTIC_FALLBACK",
+        "EVIDENCE_VERSION_NOTICE",
+        "LIFECYCLE_NOTICE",
+    ]
+    content: CopilotMessageContent
+    interaction_id: str | None = None
+    client_request_id: str | None = None
+    response_to_message_id: str | None = None
+    evidence_package_id: str | None = None
+    evidence_package_version: int | None = Field(default=None, ge=1)
+    created_at: datetime
+
+    @model_validator(mode="after")
+    def validate_role_and_content(self) -> "CopilotMessage":
+        if self.content.type != self.content_type:
+            raise ValueError("content_type must match the typed message content")
+        expected_role = {
+            "USER_QUESTION": "USER",
+            "COPILOT_ANSWER": "ASSISTANT",
+            "DETERMINISTIC_FALLBACK": "ASSISTANT",
+            "EVIDENCE_VERSION_NOTICE": "SYSTEM",
+            "LIFECYCLE_NOTICE": "SYSTEM",
+        }[self.content_type]
+        if self.role != expected_role:
+            raise ValueError("message role does not match its typed content")
+        if self.role == "ASSISTANT" and (
+            self.interaction_id is None
+            or self.evidence_package_id is None
+            or self.evidence_package_version is None
+        ):
+            raise ValueError("assistant messages require interaction and immutable evidence identity")
+        return self
+
+
+class CanonicalCopilotMessagePage(CursorPage[CopilotMessage]):
+    pass
+
+
+class CopilotThread(ContractModel):
+    thread_id: str
+    incident_id: str
+    created_at: datetime
+    updated_at: datetime
+    latest_evidence_package_id: str | None = None
+    latest_evidence_package_version: int | None = Field(default=None, ge=1)
+
+
+class CopilotThreadResponse(ContractModel):
+    thread: CopilotThread
+    messages: CanonicalCopilotMessagePage
+
+
+class SubmitCopilotMessageRequest(ContractModel):
+    question: str = Field(min_length=1, max_length=2000)
+    client_request_id: str = Field(min_length=1, max_length=128)
+    referenced_message_ids: list[str] = Field(default_factory=list, max_length=8)
+
+
+class SubmitCopilotMessageResponse(ContractModel):
+    interaction_id: str
+    thread_id: str
+    user_message_id: str
+    status: Literal["QUEUED"] = "QUEUED"
+    accepted_at: datetime
+    evidence_package_id: str
+    evidence_package_version: int = Field(ge=1)
+
+
 class SubmitCopilotQueryRequest(ContractModel):
     question: str = Field(min_length=1, max_length=2000)
     evidence_package_id: str
@@ -352,6 +574,7 @@ class DeterministicFallback(ContractModel):
         "provider_disabled",
         "provider_timeout",
         "provider_http_failure",
+        "provider_incomplete",
         "schema_validation_failed",
         "citation_validation_failed",
         "policy_validation_failed",
@@ -370,6 +593,8 @@ class RetryState(ContractModel):
 
 class CopilotInteractionView(ContractModel):
     interaction_id: str
+    incident_id: str | None = None
+    thread_id: str | None = None
     status: Literal["QUEUED", "IN_PROGRESS", "VALIDATED", "FALLBACK", "FAILED"]
     progress_stage: Literal[
         "QUEUED",

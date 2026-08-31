@@ -24,6 +24,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+it("defaults browser requests to the dedicated local API port", () => {
+  expect(new HttpInvestigatorRepository().baseUrl).toBe("http://127.0.0.1:8100/api/v1");
+});
+
 it("builds encoded no-store requests and preserves the safe API error envelope", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }))

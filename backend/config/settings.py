@@ -43,9 +43,9 @@ class Settings(BaseSettings):
     demo_seed: int = 20260827
     copilot_provider: str = "disabled"
     copilot_model: str = ""
-    copilot_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
-    copilot_initial_max_output_tokens: int = Field(default=1800, ge=256, le=8192)
-    copilot_follow_up_max_output_tokens: int = Field(default=1100, ge=256, le=8192)
+    copilot_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    copilot_initial_max_output_tokens: int = Field(default=4096, ge=256, le=8192)
+    copilot_follow_up_max_output_tokens: int = Field(default=3072, ge=256, le=8192)
     openai_api_key: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("OPENAI_API_KEY", "AMEX_OPENAI_API_KEY"),

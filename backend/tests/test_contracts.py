@@ -8,10 +8,13 @@ from pydantic import ValidationError
 
 from backend.contracts.api import (
     ApiError,
+    CopilotAnswerContent,
+    CopilotMessage,
     CursorPage,
     HumanReviewRequest,
     MetricValue,
     ResetSimulationRequest,
+    SubmitCopilotMessageRequest,
     SystemOverviewResponse,
 )
 from backend.contracts.enums import (
@@ -149,3 +152,54 @@ def test_overview_keeps_telemetry_and_lifecycle_separate() -> None:
     fields = SystemOverviewResponse.model_fields
     assert "telemetry_state" in fields
     assert "detector_summary" in fields
+
+
+def test_canonical_copilot_contract_is_all_role_strict_and_server_selects_evidence() -> None:
+    submitted = SubmitCopilotMessageRequest(
+        question="What evidence changed?",
+        client_request_id="request-1",
+        referenced_message_ids=["msg-prior"],
+    )
+    assert submitted.referenced_message_ids == ["msg-prior"]
+    with pytest.raises(ValidationError):
+        SubmitCopilotMessageRequest.model_validate(
+            {
+                **submitted.model_dump(),
+                "evidence_package_id": "client-must-not-select-this",
+            }
+        )
+
+    answer = CopilotAnswerContent(
+        answer_kind="initial_report",
+        headline="Deployment-aligned authorization failures",
+        direct_answer="The deterministic evidence most strongly supports the deployment.",
+        confidence="HIGH",
+        supporting_points=[],
+        contradictory_points=[],
+        unknown_points=[],
+        recommended_checks=[],
+        citations=[],
+        suggested_questions=["What would weaken this explanation?"],
+    )
+    message = CopilotMessage(
+        message_id="msg-answer",
+        thread_id="thr-1",
+        incident_id="INC-1",
+        sequence=1,
+        role="ASSISTANT",
+        content_type="COPILOT_ANSWER",
+        content=answer,
+        interaction_id="int-1",
+        evidence_package_id="pkg-1",
+        evidence_package_version=4,
+        created_at=datetime.now(UTC),
+    )
+    assert message.content.type == "COPILOT_ANSWER"
+
+    with pytest.raises(ValidationError):
+        CopilotMessage.model_validate(
+            {
+                **message.model_dump(mode="json"),
+                "role": "USER",
+            }
+        )

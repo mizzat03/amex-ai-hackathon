@@ -2,7 +2,7 @@ import asyncio
 from datetime import UTC, datetime
 
 from backend.config.settings import Settings
-from backend.ingestion.redis_streams import RedisStreamConsumer
+from backend.ingestion.redis_streams import RedisStreamConsumer, RedisStreamPublisher
 from simulator.payment_events.generator import PaymentEventGenerator
 
 
@@ -31,6 +31,37 @@ class FakeStreamRedis:
     async def xack(self, stream: str, group: str, message_id: str) -> int:
         self.acked.append((stream, group, message_id))
         return 1
+
+
+class FakeResetRedis:
+    def __init__(self) -> None:
+        self.unlinked: tuple[str, ...] = ()
+
+    async def scan_iter(self, *, match: str):
+        assert match == "amex:synthetic:*"
+        for key in ("amex:synthetic:payments", "amex:synthetic:state"):
+            yield key
+
+    async def unlink(self, *keys: str) -> int:
+        self.unlinked = keys
+        return len(keys)
+
+    async def delete(self, *_keys: str) -> int:
+        raise AssertionError("large synthetic keys must not use blocking DEL")
+
+
+def test_reset_detaches_large_synthetic_keys_without_blocking_redis() -> None:
+    async def exercise() -> None:
+        client = FakeResetRedis()
+        publisher = RedisStreamPublisher(client, Settings())  # type: ignore[arg-type]
+
+        assert await publisher.reset_synthetic_demo_data() == 2
+        assert client.unlinked == (
+            "amex:synthetic:payments",
+            "amex:synthetic:state",
+        )
+
+    asyncio.run(exercise())
 
 
 def test_consumer_marks_deduplication_only_after_projection_succeeds() -> None:

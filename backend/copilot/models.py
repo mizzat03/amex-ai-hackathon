@@ -7,12 +7,26 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from backend.contracts.api import CitationRef, CopilotRecommendation
+from backend.contracts.api import CitationRef
 from backend.contracts.common import ContractModel
-from backend.contracts.enums import ClaimType, CopilotAssessment, EvidenceTier
+from backend.contracts.enums import EvidenceTier
 
 
 CopilotMode = Literal["INITIAL_ANALYSIS", "FOLLOW_UP"]
+CopilotConfidence = Literal["LOW", "MODERATE", "HIGH"]
+
+
+def confidence_for_evidence_tier(
+    tier: EvidenceTier | str,
+) -> CopilotConfidence:
+    """Map only the authoritative deterministic tier to display confidence."""
+    value = tier.value if isinstance(tier, EvidenceTier) else tier
+    return {
+        EvidenceTier.STRONG_EVIDENCE.value: "HIGH",
+        EvidenceTier.MODERATE_EVIDENCE.value: "MODERATE",
+        EvidenceTier.WEAK_EVIDENCE.value: "LOW",
+        EvidenceTier.INSUFFICIENT_EVIDENCE.value: "LOW",
+    }[value]
 
 
 class NumericAssertion(ContractModel):
@@ -21,16 +35,23 @@ class NumericAssertion(ContractModel):
     value: float
 
 
-class DraftClaim(ContractModel):
-    claim_id: str
-    claim_type: ClaimType
+class DraftEvidencePoint(ContractModel):
     text: str = Field(min_length=1, max_length=1600)
-    citations: list[CitationRef] = Field(min_length=1, max_length=8)
+    citations: list[CitationRef] = Field(default_factory=list, max_length=8)
     numeric_assertions: list[NumericAssertion] = Field(default_factory=list, max_length=8)
 
 
+class DraftRecommendedCheck(ContractModel):
+    title: str = Field(min_length=1, max_length=400)
+    rationale: str = Field(min_length=1, max_length=1200)
+    expected_signal: str = Field(min_length=1, max_length=1200)
+    risk: Literal["LOW", "MEDIUM", "HIGH"]
+    requires_human_approval: Literal[True] = True
+    citations: list[CitationRef] = Field(default_factory=list, max_length=8)
+
+
 class CopilotDraft(ContractModel):
-    schema_version: Literal["copilot-response.v1"] = "copilot-response.v1"
+    schema_version: Literal["copilot-response.v2"] = "copilot-response.v2"
     mode: CopilotMode
     incident_id: str
     evidence_package_id: str
@@ -38,19 +59,20 @@ class CopilotDraft(ContractModel):
     leading_hypothesis_id: str | None = None
     evidence_tier: EvidenceTier
     strongest_alternative_id: str | None = None
-    contradiction_evidence_ids: list[str] = Field(default_factory=list)
-    missing_evidence: list[str] = Field(default_factory=list)
-    summary: str = Field(min_length=1, max_length=2400)
-    claims: list[DraftClaim] = Field(min_length=1, max_length=24)
-    assessment: CopilotAssessment | None = None
-    recommendations: list[CopilotRecommendation] = Field(default_factory=list, max_length=8)
-    limitations: list[str] = Field(default_factory=list, max_length=16)
+    headline: str = Field(min_length=1, max_length=400)
+    direct_answer: str = Field(min_length=1, max_length=2400)
+    supporting_points: list[DraftEvidencePoint] = Field(default_factory=list, max_length=12)
+    contradictory_points: list[DraftEvidencePoint] = Field(default_factory=list, max_length=12)
+    unknown_points: list[DraftEvidencePoint] = Field(default_factory=list, max_length=12)
+    recommended_checks: list[DraftRecommendedCheck] = Field(default_factory=list, max_length=8)
     suggested_questions: list[str] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def require_initial_challenge(self) -> "CopilotDraft":
-        if self.mode == "INITIAL_ANALYSIS" and not self.missing_evidence:
-            raise ValueError("initial analysis must state missing distinguishing evidence")
+        if self.mode == "INITIAL_ANALYSIS" and not self.unknown_points:
+            raise ValueError("initial analysis must state unknown or distinguishing evidence")
+        if not self.supporting_points and not self.contradictory_points:
+            raise ValueError("an answer requires at least one grounded evidence point")
         return self
 
 
@@ -58,6 +80,7 @@ class CopilotContext(ContractModel):
     mode: CopilotMode
     interaction_id: str
     incident_id: str
+    thread_id: str | None = None
     question: str | None = None
     evidence_package_id: str
     evidence_package_version: int = Field(ge=1)
@@ -68,7 +91,9 @@ class CopilotContext(ContractModel):
     evidence_items: list[dict[str, Any]]
     citation_manifest: list[dict[str, Any]]
     runbook_sections: list[dict[str, Any]] = Field(default_factory=list)
+    history_digest: dict[str, Any] = Field(default_factory=dict)
     recent_history: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+    referenced_history: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
 
 
 class CopilotAudit(ContractModel):

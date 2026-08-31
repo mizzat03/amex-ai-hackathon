@@ -1,7 +1,7 @@
 {
   "status": "PASS",
-  "generated_at": "2026-08-27T17:56:10.028885+00:00",
-  "scenario": "healthy -> injected incident -> evidence investigation -> AI fallback -> human review -> recovery",
+  "generated_at": "2026-08-29T11:54:56.185386+00:00",
+  "scenario": "healthy -> injected incident -> evidence investigation -> validated AI or controlled fallback -> human review -> recovery",
   "websocket_sequences": [
     1,
     2,
@@ -11,60 +11,66 @@
   "observed_request_latency_ms": {
     "GET /health": {
       "count": 1,
-      "min": 395.61,
-      "max": 395.61
+      "min": 82.06,
+      "max": 82.06
+    },
+    "GET /simulation/status": {
+      "count": 17,
+      "min": 37.78,
+      "max": 295.44
     },
     "POST /simulation/reset": {
       "count": 1,
-      "min": 735.32,
-      "max": 735.32
+      "min": 2905.33,
+      "max": 2905.33
     },
     "POST /simulation/start": {
       "count": 1,
-      "min": 1003.19,
-      "max": 1003.19
+      "min": 1711.76,
+      "max": 1711.76
     },
     "POST /simulation/scenarios/payment-gateway-v2.4.1-token-regression/inject": {
       "count": 1,
-      "min": 521.16,
-      "max": 521.16
+      "min": 711.09,
+      "max": 711.09
     },
     "GET /system/overview": {
-      "count": 1,
-      "min": 54.66,
-      "max": 54.66
+      "count": 5,
+      "min": 40.89,
+      "max": 83.5
     },
-    "GET /incidents/INC-2026-0827-017": {
+    "GET /incidents/inc_17aa010a01a956a5": {
       "count": 1,
-      "min": 53.17,
-      "max": 53.17
+      "min": 64.97,
+      "max": 64.97
     },
-    "GET /incidents/INC-2026-0827-017/evidence": {
+    "GET /incidents/inc_17aa010a01a956a5/evidence": {
       "count": 1,
-      "min": 415.15,
-      "max": 415.15
+      "min": 64.45,
+      "max": 64.45
     },
-    "POST /incidents/INC-2026-0827-017/copilot/queries": {
+    "POST /incidents/inc_17aa010a01a956a5/copilot/queries": {
       "count": 1,
-      "min": 379.29,
-      "max": 379.29
+      "min": 334.17,
+      "max": 334.17
     },
-    "GET /incidents/INC-2026-0827-017/copilot/interactions/int_f52599ee40da4106b33c42a91d158528": {
-      "count": 3,
-      "min": 102.64,
-      "max": 544.64
+    "GET /incidents/inc_17aa010a01a956a5/copilot/interactions/int_41361dd07b754bef9e09937a99a9d0cd": {
+      "count": 34,
+      "min": 57.83,
+      "max": 815.57
     },
-    "PUT /incidents/INC-2026-0827-017/human-review": {
+    "PUT /incidents/inc_17aa010a01a956a5/human-review": {
       "count": 1,
-      "min": 319.63,
-      "max": 319.63
+      "min": 372.26,
+      "max": 372.26
     },
     "POST /simulation/recovery": {
       "count": 1,
-      "min": 913.68,
-      "max": 913.68
+      "min": 614.58,
+      "max": 614.58
     }
   },
-  "cost_observation": "No model provider call was made; deterministic fallback has no model-token cost.",
+  "copilot_terminal_status": "VALIDATED",
+  "cost_observation": "A validated provider response was observed; this verifier does not inspect credential or billing data.",
   "scope": "Single local synthetic run; measurements are observations, not production claims."
 }

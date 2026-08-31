@@ -1,5 +1,6 @@
 """Canonical evidence, provenance, runbook, and persistence specifications."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,10 +12,12 @@ from backend.contracts.enums import EvidenceCompleteness
 from backend.dimensional_analysis.analyzer import DimensionalAnalyzer
 from backend.evidence.builder import (
     EvidenceBuilder,
+    EvidencePackage,
     IncidentEvidenceInput,
     UnsafeEvidencePackage,
 )
 from backend.evidence.runbooks import RunbookRepository
+from backend.persistence.evidence_repository import PostgresEvidencePackageRepository
 from backend.root_cause.engine import RootCauseEngine
 from backend.tests.test_dimensional_analysis import _primary_snapshot
 from simulator.operational_events.generator import deployment_event
@@ -129,3 +132,60 @@ def test_postgres_migration_uses_jsonb_with_indexed_package_metadata() -> None:
     assert "create unique index" in migration
     assert "incident_id" in migration
     assert "package_version" in migration
+
+
+def test_evidence_repository_reads_exact_and_latest_eligible_immutable_packages() -> None:
+    settings, incident, anomaly, analysis, rca = _inputs()
+    builder = EvidenceBuilder(settings)
+    first = builder.build(incident, anomaly, analysis, rca)
+    rca.result_version += 1
+    latest = builder.build(incident, anomaly, analysis, rca)
+
+    class FakeConnection:
+        def __init__(self, packages: list[EvidencePackage]) -> None:
+            self.packages = packages
+            self.queries: list[tuple[str, tuple[object, ...]]] = []
+
+        async def execute(self, query: str, *args: object) -> str:
+            self.queries.append((query, args))
+            return "INSERT 0 1"
+
+        async def fetchrow(self, query: str, *args: object):
+            self.queries.append((query, args))
+            if "evidence_package_id = $2" in query:
+                incident_id, package_id, version = args
+                package = next(
+                    (
+                        item
+                        for item in self.packages
+                        if item.incident_id == incident_id
+                        and item.evidence_package_id == package_id
+                        and item.package_version == version
+                    ),
+                    None,
+                )
+            else:
+                incident_id, completeness = args
+                package = next(
+                    (
+                        item
+                        for item in reversed(self.packages)
+                        if item.incident_id == incident_id
+                        and item.completeness.value in completeness
+                    ),
+                    None,
+                )
+            return {"package_json": package.model_dump(mode="json")} if package else None
+
+    connection = FakeConnection([first, latest])
+    repository = PostgresEvidencePackageRepository(connection)
+
+    exact = asyncio.run(
+        repository.get_exact(first.incident_id, first.evidence_package_id, first.package_version)
+    )
+    selected = asyncio.run(repository.latest_eligible(first.incident_id))
+
+    assert exact == first
+    assert selected == latest
+    assert exact is not selected
+    assert any("ORDER BY package_version DESC" in query for query, _ in connection.queries)

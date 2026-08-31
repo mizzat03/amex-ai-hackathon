@@ -6,12 +6,24 @@ import math
 import re
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 from pydantic import ValidationError
 
-from backend.copilot.models import CopilotContext, CopilotDraft
-from backend.contracts.api import CopilotClaim, ValidatedCopilotMessage
+from backend.copilot.models import (
+    CopilotContext,
+    CopilotDraft,
+    DraftEvidencePoint,
+    confidence_for_evidence_tier,
+)
+from backend.contracts.api import (
+    CitationRef,
+    CopilotAnswerContent,
+    CopilotCitationTechnicalDetails,
+    CopilotEvidenceCitation,
+    CopilotEvidencePoint,
+    CopilotRecommendedCheck,
+    CopilotRunbookCitation,
+)
 
 
 class CopilotValidationError(ValueError):
@@ -32,7 +44,7 @@ _SEMVER = re.compile(r"\bv?\d+(?:\.\d+){1,3}\b", re.IGNORECASE)
 class CopilotValidator:
     POLICY_VERSION = "copilot-validation.v1"
 
-    def validate(self, raw: dict[str, Any], context: CopilotContext) -> ValidatedCopilotMessage:
+    def validate(self, raw: dict[str, Any], context: CopilotContext) -> CopilotAnswerContent:
         try:
             draft = CopilotDraft.model_validate(raw)
         except ValidationError as exc:
@@ -70,14 +82,190 @@ class CopilotValidator:
             )
             for item in context.runbook_sections
         }
-        for evidence_id in draft.contradiction_evidence_ids:
-            if evidence_id not in evidence:
-                errors.append(f"unknown contradiction evidence: {evidence_id}")
+        point_groups = (
+            draft.supporting_points,
+            draft.contradictory_points,
+            draft.unknown_points,
+        )
+        for points in point_groups:
+            for point in points:
+                self._check_policy(point.text, errors)
+                self._check_numbers(point.text, point.numeric_assertions, evidence, errors)
+                self._check_citations(
+                    point.citations,
+                    evidence,
+                    evidence_manifest,
+                    runbook_manifest,
+                    errors,
+                    "evidence point",
+                )
+        for point in (*draft.supporting_points, *draft.contradictory_points):
+            if not point.citations:
+                errors.append("supporting and contradictory points require citations")
 
-        for claim in draft.claims:
-            self._check_policy(claim.text, errors)
-            self._check_numbers(claim.text, claim.numeric_assertions, evidence, errors)
-            for citation in claim.citations:
+        self._check_policy(draft.headline, errors)
+        self._check_policy(draft.direct_answer, errors)
+        for recommendation in draft.recommended_checks:
+            self._check_policy(
+                f"{recommendation.title} {recommendation.rationale} {recommendation.expected_signal}",
+                errors,
+            )
+            if not recommendation.requires_human_approval:
+                errors.append("recommended check bypasses human control")
+            if not recommendation.citations:
+                errors.append("recommended check is uncited")
+            self._check_citations(
+                recommendation.citations,
+                evidence,
+                evidence_manifest,
+                runbook_manifest,
+                errors,
+                "recommended check",
+            )
+
+        if errors:
+            raise CopilotValidationError(sorted(set(errors)))
+
+        citation_numbers: dict[tuple[object, ...], int] = {}
+        hydrated: list[CopilotEvidenceCitation | CopilotRunbookCitation] = []
+        ordered_citations = [
+            citation
+            for point in (
+                *draft.supporting_points,
+                *draft.contradictory_points,
+                *draft.unknown_points,
+            )
+            for citation in point.citations
+        ]
+        ordered_citations.extend(
+            citation
+            for recommendation in draft.recommended_checks
+            for citation in recommendation.citations
+        )
+        for citation in ordered_citations:
+            key = self._citation_key(citation)
+            if key in citation_numbers:
+                continue
+            number = len(citation_numbers) + 1
+            citation_numbers[key] = number
+            if citation.citation_type == "EVIDENCE":
+                item = evidence[citation.evidence_id]
+                hydrated.append(
+                    CopilotEvidenceCitation(
+                        citation_number=number,
+                        statement=str(item["statement"]),
+                        structured_value=item.get("structured_value"),
+                        unit=item.get("unit"),
+                        scope=item.get("scope"),
+                        period=item.get("period"),
+                        temporal_scope=item.get("temporal_scope", "INCIDENT_SNAPSHOT"),
+                        provenance_label=str(
+                            item.get("provenance_label", "Validated incident evidence")
+                        ),
+                        evidence_package_id=context.evidence_package_id,
+                        evidence_package_version=context.evidence_package_version,
+                        technical_details=CopilotCitationTechnicalDetails(
+                            evidence_id=citation.evidence_id,
+                            source_module=item.get("source_module"),
+                            source_version=item.get("source_version"),
+                            calculation_method=item.get("calculation_method"),
+                            calculation_lineage=list(item.get("calculation_lineage", [])),
+                            source_references=list(item.get("source_references", [])),
+                        ),
+                    )
+                )
+            else:
+                section = next(
+                    item
+                    for item in context.runbook_sections
+                    if (
+                        item.get("runbook_id"),
+                        item.get("runbook_version"),
+                        item.get("section_id"),
+                    )
+                    == key[1:]
+                )
+                hydrated.append(
+                    CopilotRunbookCitation(
+                        citation_number=number,
+                        title=str(section.get("section_title", citation.section_id)),
+                        approved_guidance_excerpt=str(
+                            section.get(
+                                "approved_guidance_excerpt",
+                                "Approved runbook guidance is available for human review.",
+                            )
+                        ),
+                        runbook_id=citation.runbook_id,
+                        runbook_version=citation.runbook_version,
+                        section_id=citation.section_id,
+                    )
+                )
+
+        def present(points: list[DraftEvidencePoint]) -> list[CopilotEvidencePoint]:
+            return [
+                CopilotEvidencePoint(
+                    text=point.text,
+                    citation_numbers=[
+                        citation_numbers[self._citation_key(citation)]
+                        for citation in point.citations
+                    ],
+                )
+                for point in points
+            ]
+
+        return CopilotAnswerContent(
+            answer_kind=(
+                "initial_report" if draft.mode == "INITIAL_ANALYSIS" else "follow_up"
+            ),
+            headline=draft.headline,
+            direct_answer=draft.direct_answer,
+            confidence=confidence_for_evidence_tier(context.evidence_tier),
+            supporting_points=present(draft.supporting_points),
+            contradictory_points=present(draft.contradictory_points),
+            unknown_points=present(draft.unknown_points),
+            recommended_checks=[
+                CopilotRecommendedCheck(
+                    title=item.title,
+                    rationale=item.rationale,
+                    expected_signal=item.expected_signal,
+                    risk=item.risk,
+                    citation_numbers=[
+                        citation_numbers[self._citation_key(citation)]
+                        for citation in item.citations
+                    ],
+                )
+                for item in draft.recommended_checks
+            ],
+            citations=hydrated,
+            suggested_questions=draft.suggested_questions,
+        )
+
+    @staticmethod
+    def _citation_key(citation: CitationRef) -> tuple[object, ...]:
+        if citation.citation_type == "EVIDENCE":
+            return (
+                "EVIDENCE",
+                citation.evidence_id,
+                citation.evidence_package_id,
+                citation.evidence_package_version,
+            )
+        return (
+            "RUNBOOK",
+            citation.runbook_id,
+            citation.runbook_version,
+            citation.section_id,
+        )
+
+    @staticmethod
+    def _check_citations(
+        citations: list[CitationRef],
+        evidence: dict[str, dict[str, Any]],
+        evidence_manifest: set[tuple[Any, Any, Any]],
+        runbook_manifest: set[tuple[Any, Any, Any]],
+        errors: list[str],
+        label: str,
+    ) -> None:
+        for citation in citations:
                 payload = citation.model_dump(mode="json")
                 if payload["citation_type"] == "EVIDENCE":
                     key = (
@@ -86,54 +274,11 @@ class CopilotValidator:
                         payload["evidence_package_version"],
                     )
                     if key not in evidence_manifest or payload["evidence_id"] not in evidence:
-                        errors.append(f"unauthorised evidence citation in {claim.claim_id}")
+                        errors.append(f"unauthorised evidence citation in {label}")
                 else:
                     key = (payload["runbook_id"], payload["runbook_version"], payload["section_id"])
                     if key not in runbook_manifest:
-                        errors.append(f"unauthorised runbook citation in {claim.claim_id}")
-            if claim.claim_type.value == "RUNBOOK_GUIDANCE" and not any(
-                citation.citation_type == "RUNBOOK" for citation in claim.citations
-            ):
-                errors.append(f"runbook guidance {claim.claim_id} lacks a runbook citation")
-
-        self._check_policy(draft.summary, errors)
-        for recommendation in draft.recommendations:
-            self._check_policy(f"{recommendation.title} {recommendation.rationale}", errors)
-            if not recommendation.requires_human_approval:
-                errors.append(f"recommendation {recommendation.recommendation_id} bypasses human control")
-            if not recommendation.citations:
-                errors.append(f"recommendation {recommendation.recommendation_id} is uncited")
-            if recommendation.action_type in {"CONTAIN", "REMEDIATE"} and not any(
-                citation.citation_type == "RUNBOOK" for citation in recommendation.citations
-            ):
-                errors.append(f"operational recommendation {recommendation.recommendation_id} is not runbook-grounded")
-
-        if errors:
-            raise CopilotValidationError(sorted(set(errors)))
-        return ValidatedCopilotMessage(
-            message_id=f"msg_{uuid4().hex}",
-            interaction_id=context.interaction_id,
-            incident_id=context.incident_id,
-            evidence_package_id=context.evidence_package_id,
-            evidence_package_version=context.evidence_package_version,
-            mode=draft.mode,
-            status="VALIDATED",
-            created_at=datetime.now(UTC),
-            summary=draft.summary,
-            claims=[
-                CopilotClaim(
-                    claim_id=claim.claim_id,
-                    claim_type=claim.claim_type,
-                    text=claim.text,
-                    citations=claim.citations,
-                )
-                for claim in draft.claims
-            ],
-            assessment=draft.assessment,
-            recommendations=draft.recommendations,
-            limitations=draft.limitations,
-            suggested_questions=draft.suggested_questions,
-        )
+                        errors.append(f"unauthorised runbook citation in {label}")
 
     @staticmethod
     def _check_policy(text: str, errors: list[str]) -> None:

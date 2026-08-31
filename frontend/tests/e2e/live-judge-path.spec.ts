@@ -23,13 +23,13 @@ test("complete judge path remains useful through deterministic AI fallback", asy
   await page.getByRole("link", { name: "Open investigation" }).click();
   await expect(page.getByRole("heading", { name: /Elevated technical errors/ })).toBeVisible();
   await page.getByRole("button", { name: "Open Copilot" }).click();
-  await expect(page.getByRole("complementary", { name: "Evidence Copilot" })).toBeVisible();
-  await page.getByLabel("Ask about this evidence package").fill("What evidence weakens this hypothesis?");
+  await expect(page.getByRole("region", { name: "Evidence Copilot" })).toBeVisible();
+  await page.getByLabel("Ask about this incident evidence").fill("What evidence weakens this hypothesis?");
   await page.getByRole("button", { name: "Submit question" }).click();
   await expect(page.getByText("Deterministic fallback", { exact: true })).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText(/provider_disabled|evidence_unavailable/)).toBeVisible();
-  await page.getByRole("button", { name: "Close Copilot" }).click();
+  await expect(page.getByText(/provider_disabled|evidence_unavailable/)).toHaveCount(0);
 
+  await page.getByRole("tab", { name: "Review" }).click();
   await page.getByRole("button", { name: "Save review" }).click();
   await expect(page).toHaveURL(/\/incidents\?.*reviewed=/);
   await expect(page.getByText("Review updated")).toBeVisible();

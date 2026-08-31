@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from collections import deque
 from dataclasses import dataclass, field
@@ -21,10 +22,86 @@ class ProviderError(RuntimeError):
         *,
         retryable: bool = False,
         reason_code: str = "provider_http_failure",
+        request_id: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
     ) -> None:
         super().__init__(message)
         self.retryable = retryable
         self.reason_code = reason_code
+        self.request_id = request_id
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.attempts = 0
+
+
+def _allows_null(schema: dict[str, Any]) -> bool:
+    schema_type = schema.get("type")
+    if schema_type == "null" or isinstance(schema_type, list) and "null" in schema_type:
+        return True
+    variants = schema.get("anyOf")
+    return isinstance(variants, list) and any(
+        isinstance(variant, dict) and _allows_null(variant) for variant in variants
+    )
+
+
+def _make_nullable(schema: dict[str, Any]) -> dict[str, Any]:
+    if _allows_null(schema):
+        return schema
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+def _normalize_openai_strict_schema(value: Any, *, nullable_optional: bool) -> Any:
+    if isinstance(value, list):
+        return [
+            _normalize_openai_strict_schema(item, nullable_optional=nullable_optional)
+            for item in value
+        ]
+    if not isinstance(value, dict):
+        return value
+
+    normalized = {key: item for key, item in value.items() if key != "default"}
+    properties = normalized.get("properties")
+    if isinstance(properties, dict):
+        originally_required = set(normalized.get("required", []))
+        normalized_properties: dict[str, Any] = {}
+        for name, property_schema in properties.items():
+            strict_property = _normalize_openai_strict_schema(
+                property_schema,
+                nullable_optional=nullable_optional,
+            )
+            if (
+                nullable_optional
+                and name not in originally_required
+                and isinstance(strict_property, dict)
+            ):
+                strict_property = _make_nullable(strict_property)
+            normalized_properties[name] = strict_property
+        normalized["properties"] = normalized_properties
+        normalized["required"] = list(normalized_properties)
+        normalized["additionalProperties"] = False
+
+    for key, item in tuple(normalized.items()):
+        if key not in {"properties", "required"}:
+            normalized[key] = _normalize_openai_strict_schema(
+                item,
+                nullable_optional=nullable_optional,
+            )
+    if normalized.get("type") == "object":
+        normalized["additionalProperties"] = False
+    return normalized
+
+
+def _openai_strict_schema(
+    schema: dict[str, Any],
+    *,
+    nullable_optional: bool = False,
+) -> dict[str, Any]:
+    """Return an OpenAI strict-schema copy without mutating the internal contract."""
+    return _normalize_openai_strict_schema(
+        copy.deepcopy(schema),
+        nullable_optional=nullable_optional,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,7 +222,7 @@ class OpenAIResponsesProvider(_HttpProvider):
                             "type": "json_schema",
                             "name": "copilot_response",
                             "strict": True,
-                            "schema": request.response_schema,
+                            "schema": _openai_strict_schema(request.response_schema),
                         }
                     },
                     "tools": [
@@ -153,7 +230,10 @@ class OpenAIResponsesProvider(_HttpProvider):
                             "type": "function",
                             "name": tool["name"],
                             "description": tool["description"],
-                            "parameters": tool["input_schema"],
+                            "parameters": _openai_strict_schema(
+                                tool["input_schema"],
+                                nullable_optional=True,
+                            ),
                             "strict": True,
                         }
                         for tool in request.tools
@@ -163,6 +243,24 @@ class OpenAIResponsesProvider(_HttpProvider):
             if not response.is_success:
                 raise self._status_error(response)
             payload = response.json()
+            usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+            if payload.get("status") == "incomplete":
+                details = payload.get("incomplete_details")
+                incomplete_reason = (
+                    details.get("reason") if isinstance(details, dict) else None
+                )
+                raise ProviderError(
+                    "Provider response was incomplete",
+                    retryable=incomplete_reason == "max_output_tokens",
+                    reason_code=(
+                        "provider_incomplete"
+                        if incomplete_reason == "max_output_tokens"
+                        else "policy_validation_failed"
+                    ),
+                    request_id=payload.get("id"),
+                    input_tokens=usage.get("input_tokens"),
+                    output_tokens=usage.get("output_tokens"),
+                )
             raw_text = payload.get("output_text")
             if not raw_text:
                 raw_text = next(
@@ -188,7 +286,6 @@ class OpenAIResponsesProvider(_HttpProvider):
                     "Provider response did not contain structured output",
                     reason_code="schema_validation_failed",
                 )
-            usage = payload.get("usage", {})
             return ProviderResponse(
                 output=json.loads(raw_text) if isinstance(raw_text, str) else {},
                 provider=self.provider_name,

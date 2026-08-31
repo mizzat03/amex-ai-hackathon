@@ -22,9 +22,11 @@ from backend.copilot.provider import provider_from_settings
 from backend.config import get_settings
 from backend.contracts.api import (
     ApiError,
+    CanonicalCopilotMessagePage,
     CopilotFeedbackRequest,
     CopilotInteractionView,
     CopilotMessagePage,
+    CopilotThreadResponse,
     CursorPage,
     EvidenceDetailResponse,
     EvidenceProjectionResponse,
@@ -41,6 +43,8 @@ from backend.contracts.api import (
     SimulationStatus,
     SubmitCopilotQueryRequest,
     SubmitCopilotQueryResponse,
+    SubmitCopilotMessageRequest,
+    SubmitCopilotMessageResponse,
     SystemOverviewResponse,
 )
 from backend.contracts.enums import IncidentSeverity, MetricKey, SimulationAction
@@ -294,13 +298,36 @@ async def evidence_detail(
     return await _service(request).evidence_detail(incident_id, evidence_id)
 
 
-@app.get("/api/v1/incidents/{incident_id}/copilot/messages", response_model=CopilotMessagePage, responses=ERROR_RESPONSES)
+@app.get(
+    "/api/v1/incidents/{incident_id}/copilot/thread",
+    response_model=CopilotThreadResponse,
+    responses=ERROR_RESPONSES,
+)
+async def copilot_thread(request: Request, incident_id: str) -> CopilotThreadResponse:
+    return await _service(request).copilot_thread(incident_id)
+
+
+@app.get(
+    "/api/v1/incidents/{incident_id}/copilot/messages",
+    response_model=CanonicalCopilotMessagePage,
+    responses=ERROR_RESPONSES,
+)
 async def copilot_messages(
     request: Request, incident_id: str, cursor: str | None = None
-) -> CopilotMessagePage:
-    if cursor not in {None, ""}:
-        raise ServiceError(422, "VALIDATION_ERROR", "The supplied cursor is invalid")
-    return await _service(request).copilot_messages(incident_id)
+) -> CanonicalCopilotMessagePage:
+    return await _service(request).canonical_copilot_messages(incident_id, cursor)
+
+
+@app.post(
+    "/api/v1/incidents/{incident_id}/copilot/messages",
+    response_model=SubmitCopilotMessageResponse,
+    status_code=202,
+    responses=ERROR_RESPONSES,
+)
+async def submit_copilot_message(
+    request: Request, incident_id: str, payload: SubmitCopilotMessageRequest
+) -> SubmitCopilotMessageResponse:
+    return await _service(request).submit_copilot_message(incident_id, payload)
 
 
 @app.post(
@@ -308,6 +335,7 @@ async def copilot_messages(
     response_model=CopilotInteractionView,
     status_code=202,
     responses=ERROR_RESPONSES,
+    deprecated=True,
 )
 async def request_initial_copilot_report(
     request: Request, incident_id: str
@@ -315,7 +343,7 @@ async def request_initial_copilot_report(
     return await _service(request).request_initial_copilot_report(incident_id)
 
 
-@app.post("/api/v1/incidents/{incident_id}/copilot/queries", response_model=SubmitCopilotQueryResponse, status_code=202, responses=ERROR_RESPONSES)
+@app.post("/api/v1/incidents/{incident_id}/copilot/queries", response_model=SubmitCopilotQueryResponse, status_code=202, responses=ERROR_RESPONSES, deprecated=True)
 async def submit_copilot_query(
     request: Request, incident_id: str, payload: SubmitCopilotQueryRequest
 ) -> SubmitCopilotQueryResponse:
@@ -352,6 +380,20 @@ async def submit_copilot_feedback(
     request: Request, message_id: str, payload: CopilotFeedbackRequest
 ) -> ResourceVersion:
     return await _service(request).submit_feedback(message_id, payload)
+
+
+@app.post(
+    "/api/v1/incidents/{incident_id}/copilot/messages/{message_id}/feedback",
+    response_model=ResourceVersion,
+    responses=ERROR_RESPONSES,
+)
+async def submit_incident_copilot_feedback(
+    request: Request,
+    incident_id: str,
+    message_id: str,
+    payload: CopilotFeedbackRequest,
+) -> ResourceVersion:
+    return await _service(request).submit_feedback(message_id, payload, incident_id)
 
 
 @app.get("/api/v1/simulation/status", response_model=SimulationStatus, responses=ERROR_RESPONSES)

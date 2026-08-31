@@ -1,9 +1,15 @@
 """Application service for the separate simulator producer process."""
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 
 from redis.asyncio import Redis
+from redis.exceptions import (
+    BusyLoadingError,
+    ConnectionError as RedisConnectionError,
+    TimeoutError as RedisTimeoutError,
+)
 
 from backend.config.settings import Settings
 from backend.contracts.api import SimulationStatus
@@ -19,6 +25,9 @@ class SimulatorService:
     STATE_KEY = "amex:synthetic:simulator:state:v1"
     BASELINE_READY_KEY = "amex:synthetic:baseline-ready:v1"
     RECOVERY_READY_KEY = "amex:synthetic:recovery-ready:v1"
+    REDIS_STARTUP_MAX_ATTEMPTS = 10
+    REDIS_STARTUP_BASE_DELAY_SECONDS = 0.25
+    REDIS_STARTUP_MAX_DELAY_SECONDS = 5.0
 
     def __init__(self, client: Redis, settings: Settings) -> None:
         self.settings = settings
@@ -27,11 +36,21 @@ class SimulatorService:
         self.publisher = RedisStreamPublisher(client, settings)
 
     async def initialize(self) -> None:
-        stored = await self.client.get(self.STATE_KEY)
-        if stored:
-            self.machine.restore(SimulationStatus.model_validate_json(stored))
-        else:
-            await self._persist_status()
+        delay = self.REDIS_STARTUP_BASE_DELAY_SECONDS
+        transient_errors = (BusyLoadingError, RedisConnectionError, RedisTimeoutError)
+        for attempt in range(1, self.REDIS_STARTUP_MAX_ATTEMPTS + 1):
+            try:
+                stored = await self.client.get(self.STATE_KEY)
+                if stored:
+                    self.machine.restore(SimulationStatus.model_validate_json(stored))
+                else:
+                    await self._persist_status()
+                return
+            except transient_errors:
+                if attempt == self.REDIS_STARTUP_MAX_ATTEMPTS:
+                    raise
+                await asyncio.sleep(delay)
+                delay = min(self.REDIS_STARTUP_MAX_DELAY_SECONDS, delay * 2)
 
     async def ping(self) -> bool:
         return bool(await self.client.ping())
@@ -153,7 +172,22 @@ class SimulatorService:
 
     async def reset(self, client_request_id: str, confirmation: str) -> SimulationStatus:
         self.machine.reset(client_request_id, confirmation)
-        await self.publisher.reset_synthetic_demo_data()
+        try:
+            await self.publisher.reset_synthetic_demo_data()
+        except asyncio.CancelledError:
+            await self._recover_failed_reset()
+            raise
+        except Exception:
+            await self._recover_failed_reset()
+            raise
         state = self.machine.complete_reset()
         await self._persist_status()
         return state
+
+    async def _recover_failed_reset(self) -> None:
+        self.machine.fail_reset()
+        try:
+            await asyncio.shield(self._persist_status())
+        except Exception:
+            # The in-memory ERROR state remains actionable even if Redis is unavailable.
+            pass

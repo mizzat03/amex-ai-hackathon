@@ -13,6 +13,7 @@ import redis.asyncio as redis
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from backend.application.clean_projection import build_clean_projection
 from backend.application.runtime_pipeline import RuntimePipeline
 from backend.config import get_settings
 from backend.config.settings import Settings
@@ -25,6 +26,19 @@ from backend.persistence.runtime_store import PostgresRuntimeStore, RuntimeStore
 RUNTIME_UPDATES_CHANNEL = "amex:runtime:updates:v1"
 RUNTIME_EPOCH_KEY = "amex:synthetic:runtime-epoch:v1"
 INGESTION_HEARTBEAT_KEY = "amex:synthetic:ingestion:heartbeat:v1"
+
+
+def projection_as_of(
+    payments: list[PaymentEvent],
+    simulation_payload: dict | None,
+    observed_at: datetime,
+) -> datetime:
+    """Keep synthetic prewarm backlog inside its event-time evidence window."""
+    if payments and simulation_payload is not None:
+        status = SimulationStatus.model_validate(simulation_payload)
+        if status.state is SimulationState.PREWARMING:
+            return max(event.occurred_at for event in payments)
+    return observed_at
 
 
 class IngestionWorker:
@@ -69,16 +83,29 @@ class IngestionWorker:
     ) -> None:
         epoch = await self.client.get(RUNTIME_EPOCH_KEY)
         if epoch != self._epoch:
-            self.pipeline = self._new_pipeline()
-            await self.pipeline.initialize()
-            self._epoch = epoch
+            await self._reset_for_epoch(epoch)
+        simulation_payload = await self.store.get_resource("simulation", "current")
         snapshot = await self.pipeline.process_batch(
             payments,
             operations,
-            as_of=datetime.now(UTC),
+            as_of=projection_as_of(payments, simulation_payload, datetime.now(UTC)),
         )
+        latest_epoch = await self.client.get(RUNTIME_EPOCH_KEY)
+        if latest_epoch != epoch:
+            await self._reset_for_epoch(latest_epoch)
+            return
         if snapshot is not None:
             await self._reconcile_simulation(snapshot.baseline_ready)
+
+    async def _reset_for_epoch(self, epoch: str | None) -> None:
+        projection = build_clean_projection(settings=self.settings)
+        await self.store.reset_ingestion_data(
+            projection.overview.model_dump(mode="json"),
+            projection.history.model_dump(mode="json"),
+        )
+        self.pipeline = self._new_pipeline()
+        await self.pipeline.initialize()
+        self._epoch = epoch
 
     async def _reconcile_simulation(self, baseline_ready: bool) -> None:
         payload = await self.store.get_resource("simulation", "current")

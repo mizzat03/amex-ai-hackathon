@@ -33,3 +33,42 @@ class PostgresEvidencePackageRepository:
             package.generated_at,
             package.model_dump_json(),
         )
+
+    async def get_exact(
+        self,
+        incident_id: str,
+        evidence_package_id: str,
+        package_version: int,
+    ) -> EvidencePackage | None:
+        row = await self._connection.fetchrow(
+            """
+            SELECT package_json
+            FROM evidence_packages
+            WHERE incident_id = $1
+              AND evidence_package_id = $2
+              AND package_version = $3
+            """,
+            incident_id,
+            evidence_package_id,
+            package_version,
+        )
+        return EvidencePackage.model_validate(row["package_json"]) if row else None
+
+    async def latest_eligible(
+        self,
+        incident_id: str,
+        completeness: tuple[str, ...] = ("COMPLETE", "PARTIAL"),
+    ) -> EvidencePackage | None:
+        row = await self._connection.fetchrow(
+            """
+            SELECT package_json
+            FROM evidence_packages
+            WHERE incident_id = $1
+              AND completeness = ANY($2::text[])
+            ORDER BY package_version DESC, generated_at DESC
+            LIMIT 1
+            """,
+            incident_id,
+            list(completeness),
+        )
+        return EvidencePackage.model_validate(row["package_json"]) if row else None

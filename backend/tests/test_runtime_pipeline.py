@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 from backend.application.runtime_pipeline import RuntimePipeline
 from backend.config.settings import Settings
+from backend.ingestion.app import projection_as_of
 from backend.persistence.runtime_store import InMemoryRuntimeStore
 from simulator.operational_events.generator import deployment_event, rollback_event
 from simulator.payment_events.generator import PaymentEventGenerator
@@ -43,6 +44,27 @@ def _traffic(
         for second in range(seconds)
         for event in generator.generate_batch(per_second, start_at + timedelta(seconds=second))
     ]
+
+
+def test_prewarm_backlog_uses_event_time_while_live_batches_use_observation_time() -> None:
+    event_at = datetime(2026, 8, 28, 4, 0, tzinfo=UTC)
+    observed_at = event_at + timedelta(minutes=3)
+    payments = PaymentEventGenerator(seed=100).generate_batch(2, event_at)
+    prewarming = {
+        "state": "PREWARMING",
+        "baseline_ready": False,
+        "available_actions": ["STOP"],
+    }
+    running = {
+        "state": "RUNNING_HEALTHY",
+        "baseline_ready": True,
+        "available_actions": ["INJECT_DEPLOYMENT_REGRESSION", "STOP", "RESET"],
+    }
+
+    assert projection_as_of(payments, prewarming, observed_at) == max(
+        event.occurred_at for event in payments
+    )
+    assert projection_as_of(payments, running, observed_at) == observed_at
 
 
 def test_progressive_pipeline_projects_live_metrics_incident_evidence_and_recovery() -> None:

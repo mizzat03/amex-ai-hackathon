@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import Awaitable, Callable
@@ -14,10 +14,10 @@ from backend.copilot.provider import CopilotProvider, ProviderError, ProviderReq
 from backend.copilot.tools import ReadOnlyToolRegistry, ToolResult, projection_tools
 from backend.copilot.validation import CopilotValidationError, CopilotValidator
 from backend.contracts.api import (
+    CopilotAnswerContent,
     CopilotInteractionView,
     DeterministicFallback,
     RetryState,
-    ValidatedCopilotMessage,
 )
 
 
@@ -26,12 +26,12 @@ ProgressCallback = Callable[[str], Awaitable[None]]
 
 @dataclass(frozen=True, slots=True)
 class CopilotConfiguration:
-    version: str = "copilot-config.v1"
+    version: str = "copilot-config.v2"
     reasoning_profile: str = "BALANCED"
-    initial_max_output_tokens: int = 1800
-    follow_up_max_output_tokens: int = 1100
+    initial_max_output_tokens: int = 4096
+    follow_up_max_output_tokens: int = 3072
     max_context_characters: int = 60_000
-    timeout_seconds: float = 15.0
+    timeout_seconds: float = 30.0
     circuit_failure_threshold: int = 3
     circuit_reset_seconds: int = 60
     max_estimated_cost_usd: float = 0.50
@@ -40,7 +40,7 @@ class CopilotConfiguration:
 @dataclass(frozen=True, slots=True)
 class CopilotRunResult:
     interaction: CopilotInteractionView
-    message: ValidatedCopilotMessage | None
+    message: CopilotAnswerContent | None
     audit: CopilotAudit
     raw_output: dict[str, object] | None
     tool_results: tuple[ToolResult, ...] = ()
@@ -178,9 +178,11 @@ class CopilotOrchestrator:
             )
             interaction = CopilotInteractionView(
                 interaction_id=context.interaction_id,
+                incident_id=context.incident_id,
+                thread_id=context.thread_id,
                 status="VALIDATED",
                 progress_updated_at=completed_at,
-                validated_message_id=message.message_id,
+                validated_message_id=None,
                 retry=RetryState(eligible=False),
             )
             result = CopilotRunResult(interaction, message, audit, raw_output, tool_results)
@@ -193,6 +195,21 @@ class CopilotOrchestrator:
             self.breaker.failure(now)
             if isinstance(exc, CopilotValidationError):
                 validation_errors.extend(exc.errors)
+            elif isinstance(exc, ProviderError):
+                attempts = max(attempts, exc.attempts)
+                validation_errors.append(f"ProviderError:{exc.reason_code}")
+                if any(
+                    value is not None
+                    for value in (exc.request_id, exc.input_tokens, exc.output_tokens)
+                ):
+                    provider_response = ProviderResponse(
+                        output={},
+                        provider=self.provider.provider_name,
+                        model_id=self.provider.model_id,
+                        request_id=exc.request_id,
+                        input_tokens=exc.input_tokens,
+                        output_tokens=exc.output_tokens,
+                    )
             else:
                 validation_errors.append(type(exc).__name__)
             reason_code = self._safe_reason_code(exc, validation_errors)
@@ -258,6 +275,7 @@ class CopilotOrchestrator:
             input_payload=payload,
             response_schema=CopilotDraft.model_json_schema(),
             max_output_tokens=max_tokens,
+            reasoning_profile=self.configuration.reasoning_profile,
             repair_errors=repair_errors,
             tools=self.tools.definitions() if include_tools and context.mode == "FOLLOW_UP" else (),
         )
@@ -295,21 +313,38 @@ class CopilotOrchestrator:
 
     async def _call_with_retry(self, request: ProviderRequest) -> tuple[ProviderResponse, int]:
         attempts = 0
+        current_request = request
         for attempt in range(2):
             attempts += 1
             try:
                 response = await asyncio.wait_for(
-                    self.provider.generate(request), timeout=self.configuration.timeout_seconds
+                    self.provider.generate(current_request),
+                    timeout=self.configuration.timeout_seconds,
                 )
                 return response, attempts
             except ProviderError as exc:
                 if attempt == 0 and exc.retryable:
+                    if exc.reason_code == "provider_incomplete":
+                        current_request = replace(
+                            current_request,
+                            max_output_tokens=min(
+                                max(current_request.max_output_tokens * 2, 4096),
+                                8192,
+                            ),
+                        )
                     continue
+                exc.attempts = attempts
                 raise
-            except (TimeoutError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.TimeoutError) as exc:
                 if attempt == 0:
                     continue
-                raise
+                wrapped = ProviderError(
+                    "Provider request timed out",
+                    retryable=True,
+                    reason_code="provider_timeout",
+                )
+                wrapped.attempts = attempts
+                raise wrapped from exc
         raise RuntimeError("unreachable retry state")
 
     def _check_cost_budget(self, response: ProviderResponse) -> None:
@@ -337,6 +372,7 @@ class CopilotOrchestrator:
             "provider_disabled": "AI generation is disabled; deterministic incident findings remain available.",
             "provider_timeout": "The AI provider timed out; deterministic incident findings remain available.",
             "provider_http_failure": "The AI provider is unavailable; deterministic incident findings remain available.",
+            "provider_incomplete": "The AI provider returned an incomplete report; no generated content was displayed.",
             "schema_validation_failed": "The generated report failed schema validation and was not displayed.",
             "citation_validation_failed": "The generated report failed citation validation and was not displayed.",
             "policy_validation_failed": "The generated report failed safety validation and was not displayed.",
@@ -351,16 +387,28 @@ class CopilotOrchestrator:
         )
         interaction = CopilotInteractionView(
             interaction_id=context.interaction_id,
+            incident_id=context.incident_id,
+            thread_id=context.thread_id,
             status="FALLBACK",
             progress_updated_at=completed_at,
             deterministic_fallback=fallback,
             retry=RetryState(
                 eligible=reason_code
-                in {"provider_timeout", "provider_http_failure", "unexpected_internal_failure"},
+                in {
+                    "provider_timeout",
+                    "provider_http_failure",
+                    "provider_incomplete",
+                    "unexpected_internal_failure",
+                },
                 unavailable_reason=(
                     "One manual retry is available"
                     if reason_code
-                    in {"provider_timeout", "provider_http_failure", "unexpected_internal_failure"}
+                    in {
+                        "provider_timeout",
+                        "provider_http_failure",
+                        "provider_incomplete",
+                        "unexpected_internal_failure",
+                    }
                     else "This fallback category is not retryable"
                 ),
             ),

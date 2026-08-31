@@ -81,7 +81,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Request Initial Copilot Report */
+        /**
+         * Request Initial Copilot Report
+         * @deprecated
+         */
         post: operations["request_initial_copilot_report_api_v1_incidents__incident_id__copilot_initial_report_post"];
         delete?: never;
         options?: never;
@@ -133,7 +136,25 @@ export interface paths {
         /** Copilot Messages */
         get: operations["copilot_messages_api_v1_incidents__incident_id__copilot_messages_get"];
         put?: never;
-        post?: never;
+        /** Submit Copilot Message */
+        post: operations["submit_copilot_message_api_v1_incidents__incident_id__copilot_messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/incidents/{incident_id}/copilot/messages/{message_id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Incident Copilot Feedback */
+        post: operations["submit_incident_copilot_feedback_api_v1_incidents__incident_id__copilot_messages__message_id__feedback_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -149,8 +170,28 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Submit Copilot Query */
+        /**
+         * Submit Copilot Query
+         * @deprecated
+         */
         post: operations["submit_copilot_query_api_v1_incidents__incident_id__copilot_queries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/incidents/{incident_id}/copilot/thread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Copilot Thread */
+        get: operations["copilot_thread_api_v1_incidents__incident_id__copilot_thread_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -377,23 +418,106 @@ export interface components {
             /** Unavailable Reason */
             unavailable_reason?: string | null;
         };
-        /**
-         * ClaimType
-         * @enum {string}
-         */
-        ClaimType: "OBSERVED_FACT" | "DETERMINISTIC_FINDING" | "COPILOT_INFERENCE" | "RUNBOOK_GUIDANCE";
-        /**
-         * CopilotAssessment
-         * @enum {string}
-         */
-        CopilotAssessment: "SUPPORTED" | "WEAKENED" | "CONFLICTING" | "INCONCLUSIVE";
-        /** CopilotClaim */
-        CopilotClaim: {
+        /** CanonicalCopilotMessagePage */
+        CanonicalCopilotMessagePage: {
+            /** Items */
+            items: components["schemas"]["CopilotMessage"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
+        /** CopilotAnswerContent */
+        CopilotAnswerContent: {
+            /**
+             * Answer Kind
+             * @enum {string}
+             */
+            answer_kind: "initial_report" | "follow_up";
             /** Citations */
-            citations: (components["schemas"]["EvidenceCitationRef"] | components["schemas"]["RunbookCitationRef"])[];
-            /** Claim Id */
-            claim_id: string;
-            claim_type: components["schemas"]["ClaimType"];
+            citations?: (components["schemas"]["CopilotEvidenceCitation"] | components["schemas"]["CopilotRunbookCitation"])[];
+            /**
+             * Confidence
+             * @enum {string}
+             */
+            confidence: "LOW" | "MODERATE" | "HIGH";
+            /** Contradictory Points */
+            contradictory_points?: components["schemas"]["CopilotEvidencePoint"][];
+            /** Direct Answer */
+            direct_answer: string;
+            /** Headline */
+            headline: string;
+            /** Recommended Checks */
+            recommended_checks?: components["schemas"]["CopilotRecommendedCheck"][];
+            /**
+             * Schema Version
+             * @default copilot-answer.v2
+             * @constant
+             */
+            schema_version: "copilot-answer.v2";
+            /** Suggested Questions */
+            suggested_questions?: string[];
+            /** Supporting Points */
+            supporting_points?: components["schemas"]["CopilotEvidencePoint"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "COPILOT_ANSWER";
+            /** Unknown Points */
+            unknown_points?: components["schemas"]["CopilotEvidencePoint"][];
+            /**
+             * Validation Status
+             * @default VALIDATED
+             * @constant
+             */
+            validation_status: "VALIDATED";
+        };
+        /** CopilotCitationTechnicalDetails */
+        CopilotCitationTechnicalDetails: {
+            /** Calculation Lineage */
+            calculation_lineage?: string[];
+            /** Calculation Method */
+            calculation_method?: string | null;
+            /** Evidence Id */
+            evidence_id?: string | null;
+            /** Source Module */
+            source_module?: string | null;
+            /** Source References */
+            source_references?: string[];
+            /** Source Version */
+            source_version?: string | null;
+        };
+        /** CopilotEvidenceCitation */
+        CopilotEvidenceCitation: {
+            /** Citation Number */
+            citation_number: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            citation_type: "EVIDENCE";
+            /** Evidence Package Id */
+            evidence_package_id: string;
+            /** Evidence Package Version */
+            evidence_package_version: number;
+            period?: components["schemas"]["Period"] | null;
+            /** Provenance Label */
+            provenance_label: string;
+            scope?: components["schemas"]["ScopedValue"] | null;
+            /** Statement */
+            statement: string;
+            /** Structured Value */
+            structured_value?: {
+                [key: string]: unknown;
+            } | null;
+            technical_details: components["schemas"]["CopilotCitationTechnicalDetails"];
+            temporal_scope: components["schemas"]["TemporalScope"];
+            /** Unit */
+            unit?: string | null;
+        };
+        /** CopilotEvidencePoint */
+        CopilotEvidencePoint: {
+            /** Citation Numbers */
+            citation_numbers?: number[];
             /** Text */
             text: string;
         };
@@ -412,6 +536,8 @@ export interface components {
         /** CopilotInteractionView */
         CopilotInteractionView: {
             deterministic_fallback?: components["schemas"]["DeterministicFallback"] | null;
+            /** Incident Id */
+            incident_id?: string | null;
             /** Interaction Id */
             interaction_id: string;
             /** Progress Stage */
@@ -424,31 +550,57 @@ export interface components {
              * @enum {string}
              */
             status: "QUEUED" | "IN_PROGRESS" | "VALIDATED" | "FALLBACK" | "FAILED";
+            /** Thread Id */
+            thread_id?: string | null;
             /** Validated Message Id */
             validated_message_id?: string | null;
         };
-        /** CopilotMessagePage */
-        CopilotMessagePage: {
-            /** Items */
-            items: components["schemas"]["ValidatedCopilotMessage"][];
-            /** Next Cursor */
-            next_cursor?: string | null;
-        };
-        /** CopilotRecommendation */
-        CopilotRecommendation: {
+        /** CopilotMessage */
+        CopilotMessage: {
+            /** Client Request Id */
+            client_request_id?: string | null;
+            /** Content */
+            content: components["schemas"]["UserQuestionContent"] | components["schemas"]["CopilotAnswerContent"] | components["schemas"]["DeterministicFallbackContent"] | components["schemas"]["EvidenceVersionNoticeContent"] | components["schemas"]["LifecycleNoticeContent"];
             /**
-             * Action Type
+             * Content Type
              * @enum {string}
              */
-            action_type: "VERIFY" | "CONTAIN" | "REMEDIATE" | "MONITOR";
-            /** Citations */
-            citations: (components["schemas"]["EvidenceCitationRef"] | components["schemas"]["RunbookCitationRef"])[];
+            content_type: "USER_QUESTION" | "COPILOT_ANSWER" | "DETERMINISTIC_FALLBACK" | "EVIDENCE_VERSION_NOTICE" | "LIFECYCLE_NOTICE";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Evidence Package Id */
+            evidence_package_id?: string | null;
+            /** Evidence Package Version */
+            evidence_package_version?: number | null;
+            /** Incident Id */
+            incident_id: string;
+            /** Interaction Id */
+            interaction_id?: string | null;
+            /** Message Id */
+            message_id: string;
+            /** Response To Message Id */
+            response_to_message_id?: string | null;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "USER" | "ASSISTANT" | "SYSTEM";
+            /** Sequence */
+            sequence: number;
+            /** Thread Id */
+            thread_id: string;
+        };
+        /** CopilotRecommendedCheck */
+        CopilotRecommendedCheck: {
+            /** Citation Numbers */
+            citation_numbers?: number[];
             /** Expected Signal */
             expected_signal: string;
             /** Rationale */
             rationale: string;
-            /** Recommendation Id */
-            recommendation_id: string;
             /**
              * Requires Human Approval
              * @default true
@@ -456,12 +608,64 @@ export interface components {
              */
             requires_human_approval: true;
             /**
-             * Risk Level
+             * Risk
              * @enum {string}
              */
-            risk_level: "LOW" | "MEDIUM" | "HIGH";
+            risk: "LOW" | "MEDIUM" | "HIGH";
             /** Title */
             title: string;
+        };
+        /** CopilotRunbookCitation */
+        CopilotRunbookCitation: {
+            /** Approved Guidance Excerpt */
+            approved_guidance_excerpt: string;
+            /** Citation Number */
+            citation_number: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            citation_type: "RUNBOOK";
+            /**
+             * Guidance Not Incident Proof
+             * @default true
+             * @constant
+             */
+            guidance_not_incident_proof: true;
+            /** Runbook Id */
+            runbook_id: string;
+            /** Runbook Version */
+            runbook_version: string;
+            /** Section Id */
+            section_id: string;
+            /** Title */
+            title: string;
+        };
+        /** CopilotThread */
+        CopilotThread: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Incident Id */
+            incident_id: string;
+            /** Latest Evidence Package Id */
+            latest_evidence_package_id?: string | null;
+            /** Latest Evidence Package Version */
+            latest_evidence_package_version?: number | null;
+            /** Thread Id */
+            thread_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** CopilotThreadResponse */
+        CopilotThreadResponse: {
+            messages: components["schemas"]["CanonicalCopilotMessagePage"];
+            thread: components["schemas"]["CopilotThread"];
         };
         /** CopilotThreadSummary */
         CopilotThreadSummary: {
@@ -497,9 +701,32 @@ export interface components {
              * Reason Code
              * @enum {string}
              */
-            reason_code: "provider_disabled" | "provider_timeout" | "provider_http_failure" | "schema_validation_failed" | "citation_validation_failed" | "policy_validation_failed" | "circuit_open" | "evidence_unavailable" | "unexpected_internal_failure";
+            reason_code: "provider_disabled" | "provider_timeout" | "provider_http_failure" | "provider_incomplete" | "schema_validation_failed" | "citation_validation_failed" | "policy_validation_failed" | "circuit_open" | "evidence_unavailable" | "unexpected_internal_failure";
             /** Summary */
             summary: string;
+        };
+        /** DeterministicFallbackContent */
+        DeterministicFallbackContent: {
+            /**
+             * Label
+             * @default Deterministic fallback
+             * @constant
+             */
+            label: "Deterministic fallback";
+            /**
+             * Reason Code
+             * @enum {string}
+             */
+            reason_code: "provider_disabled" | "provider_timeout" | "provider_http_failure" | "provider_incomplete" | "schema_validation_failed" | "citation_validation_failed" | "policy_validation_failed" | "circuit_open" | "evidence_unavailable" | "unexpected_internal_failure";
+            /** Retry Eligible */
+            retry_eligible: boolean;
+            /** Summary */
+            summary: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "DETERMINISTIC_FALLBACK";
         };
         /** ErrorDetail */
         ErrorDetail: {
@@ -630,6 +857,24 @@ export interface components {
          * @enum {string}
          */
         EvidenceTier: "STRONG_EVIDENCE" | "MODERATE_EVIDENCE" | "WEAK_EVIDENCE" | "INSUFFICIENT_EVIDENCE";
+        /** EvidenceVersionNoticeContent */
+        EvidenceVersionNoticeContent: {
+            /** Evidence Package Id */
+            evidence_package_id: string;
+            /** Evidence Package Version */
+            evidence_package_version: number;
+            /** Previous Evidence Package Id */
+            previous_evidence_package_id: string;
+            /** Previous Evidence Package Version */
+            previous_evidence_package_version: number;
+            /** Summary */
+            summary: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "EVIDENCE_VERSION_NOTICE";
+        };
         /** HealthResponse */
         HealthResponse: {
             /**
@@ -870,6 +1115,21 @@ export interface components {
             /** Summary */
             summary: string;
         };
+        /** LifecycleNoticeContent */
+        LifecycleNoticeContent: {
+            /**
+             * Lifecycle
+             * @enum {string}
+             */
+            lifecycle: "OPEN" | "RECOVERY_CANDIDATE" | "RESOLVED";
+            /** Summary */
+            summary: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "LIFECYCLE_NOTICE";
+        };
         /** MetricComparison */
         MetricComparison: {
             /** Absolute Change */
@@ -1062,6 +1322,39 @@ export interface components {
             started_at?: string | null;
             state: components["schemas"]["SimulationState"];
         };
+        /** SubmitCopilotMessageRequest */
+        SubmitCopilotMessageRequest: {
+            /** Client Request Id */
+            client_request_id: string;
+            /** Question */
+            question: string;
+            /** Referenced Message Ids */
+            referenced_message_ids?: string[];
+        };
+        /** SubmitCopilotMessageResponse */
+        SubmitCopilotMessageResponse: {
+            /**
+             * Accepted At
+             * Format: date-time
+             */
+            accepted_at: string;
+            /** Evidence Package Id */
+            evidence_package_id: string;
+            /** Evidence Package Version */
+            evidence_package_version: number;
+            /** Interaction Id */
+            interaction_id: string;
+            /**
+             * Status
+             * @default QUEUED
+             * @constant
+             */
+            status: "QUEUED";
+            /** Thread Id */
+            thread_id: string;
+            /** User Message Id */
+            user_message_id: string;
+        };
         /** SubmitCopilotQueryRequest */
         SubmitCopilotQueryRequest: {
             /** Client Request Id */
@@ -1124,50 +1417,17 @@ export interface components {
          * @enum {string}
          */
         TemporalScope: "INCIDENT_SNAPSHOT" | "LIVE_STATUS" | "HISTORICAL_BASELINE";
-        /** ValidatedCopilotMessage */
-        ValidatedCopilotMessage: {
-            assessment?: components["schemas"]["CopilotAssessment"] | null;
-            /** Claims */
-            claims: components["schemas"]["CopilotClaim"][];
+        /** UserQuestionContent */
+        UserQuestionContent: {
+            /** Question */
+            question: string;
+            /** Referenced Message Ids */
+            referenced_message_ids?: string[];
             /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Evidence Package Id */
-            evidence_package_id: string;
-            /** Evidence Package Version */
-            evidence_package_version: number;
-            /** Incident Id */
-            incident_id: string;
-            /** Interaction Id */
-            interaction_id: string;
-            /** Limitations */
-            limitations: string[];
-            /** Message Id */
-            message_id: string;
-            /**
-             * Mode
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            mode: "INITIAL_ANALYSIS" | "FOLLOW_UP";
-            /** Recommendations */
-            recommendations: components["schemas"]["CopilotRecommendation"][];
-            /**
-             * Role
-             * @default ASSISTANT
-             * @constant
-             */
-            role: "ASSISTANT";
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "VALIDATED" | "DETERMINISTIC_FALLBACK";
-            /** Suggested Questions */
-            suggested_questions: string[];
-            /** Summary */
-            summary?: string | null;
+            type: "USER_QUESTION";
         };
     };
     responses: never;
@@ -1681,7 +1941,150 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CopilotMessagePage"];
+                    "application/json": components["schemas"]["CanonicalCopilotMessagePage"];
+                };
+            };
+            /** @description Invalid command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Version or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Dependency unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    submit_copilot_message_api_v1_incidents__incident_id__copilot_messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                incident_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitCopilotMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmitCopilotMessageResponse"];
+                };
+            };
+            /** @description Invalid command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Version or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Dependency unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    submit_incident_copilot_feedback_api_v1_incidents__incident_id__copilot_messages__message_id__feedback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                incident_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopilotFeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceVersion"];
                 };
             };
             /** @description Invalid command */
@@ -1753,6 +2156,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SubmitCopilotQueryResponse"];
+                };
+            };
+            /** @description Invalid command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Version or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Dependency unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    copilot_thread_api_v1_incidents__incident_id__copilot_thread_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                incident_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopilotThreadResponse"];
                 };
             };
             /** @description Invalid command */

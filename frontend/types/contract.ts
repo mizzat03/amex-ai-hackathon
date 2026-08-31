@@ -5,4 +5,6 @@ export type ApiSchemas = components["schemas"];
 export type SystemOverview = ApiSchemas["SystemOverviewResponse"];
 export type IncidentWorkspace = ApiSchemas["IncidentWorkspaceResponse"];
 export type EvidenceProjection = ApiSchemas["EvidenceProjectionResponse"];
-export type ValidatedCopilotMessage = ApiSchemas["ValidatedCopilotMessage"];
+export type CopilotMessage = ApiSchemas["CopilotMessage"];
+export type CopilotThread = ApiSchemas["CopilotThread"];
+export type CopilotAnswer = ApiSchemas["CopilotAnswerContent"];

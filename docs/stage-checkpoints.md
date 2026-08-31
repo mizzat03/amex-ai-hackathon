@@ -368,6 +368,13 @@ Verified:
   isolation, read-only tool authorization/rounds, timeout/retry/fallback, caching and persistence.
 - Mock-transport tests verify both live provider adapters' structured-output, balanced-reasoning,
   native-tool and usage-metadata request/response boundaries without credentials.
+- Post-checkpoint runtime correction: OpenAI incomplete terminal states are no longer presented as
+  schema failures. `copilot-config.v2` reserves a larger reasoning-plus-JSON budget, permits one
+  bounded token-limit retry, records truthful audit metadata and exposes a retryable
+  `provider_incomplete` fallback if the provider remains incomplete.
+- Post-correction verification: 18 focused Copilot tests and the full 79-test backend suite passed
+  (four environment-gated integration tests skipped); frontend component tests passed 18/18, and
+  TypeScript, ESLint, production build and all six Compose health checks passed.
 - Missing credential/model-variable check — all four absent; evaluation runner recorded
   `PENDING_CREDENTIALS`, made no provider calls and selected no winner.
 
@@ -409,6 +416,10 @@ Verified:
 - Frontend TypeScript and lint — passed with zero errors or warnings; component tests — 15 passed;
   production build — passed with only the five intended routes.
 - OpenAPI export/TypeScript regeneration and Python compile validation — passed.
+- Post-checkpoint cold-start correction: Redis readiness now requires an exact `PONG`, simulator
+  initialization has bounded transient-error backoff, 82 backend tests passed (four gated skips),
+  and a real rebuild preserved the existing 504 MB Redis volume while all six services became
+  healthy after its 26.9-second restore.
 
 Configuration or limitations:
 
@@ -427,3 +438,49 @@ Next:
 
 - Supply live evaluation credentials/model IDs through a secret manager, run the locked blinded
   evaluation, record the reviewed winner, then configure that one provider/model for both modes.
+
+## Post-Stage-10 canonical Copilot thread and tab workspace: COMPLETE (2026-08-29)
+
+Implemented:
+
+- One incident-owned canonical Copilot thread with ordered durable user, assistant, system and
+  fallback messages, cursor pagination, incident-scoped idempotency and compatibility adapters.
+- Immutable evidence-package pinning, historical citation hydration, bounded untrusted history,
+  one evidence-version notice per transition and lifecycle-aware package selection.
+- Provider-neutral structured answer validation, persisted deterministic fallback and an atomic
+  retry response slot that replaces fallback without duplicating transcript entries.
+- The approved incident workspace now uses Summary, Timeline, Evidence, Copilot and Review tabs;
+  the old drawer, resize and conversation-reset presentation is absent. Temporary screenshot-state
+  wiring is isolated under the fixture-state review route.
+- PostgreSQL reset now skips repeat schema migration, truncates only the fixed synthetic-table
+  allowlist, preserves mixed-resource configuration records and evaluates prewarm backlog using
+  event time so repeated local demo runs do not stall.
+
+Verified:
+
+- Generated OpenAPI, evidence schema and TypeScript contracts completed successfully.
+- Full backend suite: 102 passed and four environment-gated tests skipped; the PostgreSQL-enabled
+  runtime-store round trip/reset gate passed separately.
+- The exact v41 to v42 fake-provider journey passed: refresh persistence, one transition notice,
+  v41 historical citation retention, controlled fallback and successful v42 retry without duplicate
+  messages.
+- Frontend TypeScript, ESLint and all 20 component tests passed. The production browser gate rebuilt
+  the application and reported five passed checks with one live-only browser test skipped; axe found
+  no violations in the approved fixture pages and Copilot tab.
+- Both updated incident baselines and all six named Copilot screenshots were regenerated and
+  visually inspected at the approved desktop/light and laptop/dark targets. Overview baselines were
+  not rewritten.
+- `scripts/verify_live_stack.py` passed over real local REST/WebSocket transports after reset,
+  prewarm, injection, investigation, validated-or-fallback Copilot handling, review and recovery.
+- Final Compose check reported PostgreSQL, Redis, simulator, ingestion, API and frontend healthy.
+
+Configuration or limitations:
+
+- The blinded Claude Sonnet 5 versus GPT-5.6 Terra comparison remains `PENDING_CREDENTIALS`; no
+  model-quality winner is claimed. A validated runtime response observed by the provider-neutral live
+  verifier is not a substitute for the locked repeated comparison and human rubric review.
+
+Checkpoint:
+
+- The canonical-thread brownfield plan is implemented and verified without creating a commit or
+  inspecting secret-bearing environment files.

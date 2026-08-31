@@ -354,6 +354,7 @@ class RuntimePipeline:
             rca,
             optional_missing=["Downstream issuer traces are unavailable in the synthetic demo."],
         )
+        await self.store.save_evidence_package(package.model_dump(mode="json"))
         evidence = self.evidence_builder.dashboard_projection(package)
         scope = analysis.best_affected_scope
         signature = analysis.dominant_error_signature

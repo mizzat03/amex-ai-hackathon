@@ -21,6 +21,14 @@ class FakeRedis:
 class FakeSimulator:
     SCENARIO_ID = "payment-gateway-v2.4.1-token-regression"
 
+    async def status(self) -> SimulationStatus:
+        return SimulationStatus(
+            state="STOPPED",
+            baseline_ready=False,
+            available_actions=["START", "RESET"],
+            message="Authoritative simulator status",
+        )
+
     async def start(self, client_request_id: str) -> SimulationStatus:
         return SimulationStatus(
             state="RUNNING_HEALTHY",
@@ -177,6 +185,37 @@ def test_review_feedback_copilot_idempotency_and_websocket_invalidation() -> Non
         assert feedback.json()["version"] == 1
 
 
+def test_canonical_copilot_routes_auto_create_thread_and_reject_bad_cursor() -> None:
+    with api_client() as client:
+        incident_id = "INC-2026-0827-017"
+        created = client.get(f"/api/v1/incidents/{incident_id}/copilot/thread")
+        reopened = client.get(f"/api/v1/incidents/{incident_id}/copilot/thread")
+        assert created.status_code == reopened.status_code == 200
+        assert created.json()["thread"]["thread_id"] == reopened.json()["thread"]["thread_id"]
+
+        accepted = client.post(
+            f"/api/v1/incidents/{incident_id}/copilot/messages",
+            json={
+                "question": "What evidence changed?",
+                "client_request_id": "canonical-api-1",
+                "referenced_message_ids": [],
+            },
+        )
+        assert accepted.status_code == 202
+        assert accepted.json()["thread_id"] == created.json()["thread"]["thread_id"]
+        assert accepted.json()["evidence_package_version"] == 3
+
+        messages = client.get(f"/api/v1/incidents/{incident_id}/copilot/messages")
+        assert messages.status_code == 200
+        assert [item["role"] for item in messages.json()["items"]] == ["USER"]
+        malformed = client.get(
+            f"/api/v1/incidents/{incident_id}/copilot/messages",
+            params={"cursor": "not-a-cursor"},
+        )
+        assert malformed.status_code == 422
+        assert malformed.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
 def test_allowlisted_simulation_commands_are_idempotent() -> None:
     with api_client() as client:
         started = client.post("/api/v1/simulation/start", json={"client_request_id": "start-1"})
@@ -198,6 +237,20 @@ def test_allowlisted_simulation_commands_are_idempotent() -> None:
         assert injected.json()["state"] == "INCIDENT_ACTIVE"
 
 
+def test_simulation_status_recovers_when_its_projection_is_missing() -> None:
+    with api_client() as client:
+        asyncio.run(app.state.service.store.reset_synthetic_data())
+
+        response = client.get("/api/v1/simulation/status")
+
+        assert response.status_code == 200
+        assert response.json()["state"] == "STOPPED"
+        persisted = asyncio.run(
+            app.state.service.store.get_resource("simulation", "current")
+        )
+        assert persisted == response.json()
+
+
 @pytest.mark.skipif(
     os.getenv("AMEX_RUN_POSTGRES_TESTS") != "1",
     reason="Set AMEX_RUN_POSTGRES_TESTS=1 with the local Compose database running",
@@ -212,7 +265,18 @@ def test_postgres_runtime_store_round_trip() -> None:
         )
         await store.migrate()
         await store.put_resource("integration_test", "round-trip", {"safe": True})
+        await store.put_command("integration-reset-probe", "request-1", {"safe": True})
         assert await store.get_resource("integration_test", "round-trip") == {"safe": True}
-        assert await store.ping()
+        assert await store.get_command("integration-reset-probe", "request-1") == {"safe": True}
+        try:
+            await store.reset_synthetic_data()
+            assert await store.get_command("integration-reset-probe", "request-1") is None
+            assert await store.get_resource("integration_test", "round-trip") == {"safe": True}
+            assert await store.ping()
+        finally:
+            # This opt-in test can share the local Compose database with the running
+            # demo. Restore the clean projection so verification never leaves the UI
+            # without overview or simulation status records.
+            await InvestigatorService(store).initialize(migrate=False)
 
     asyncio.run(exercise())

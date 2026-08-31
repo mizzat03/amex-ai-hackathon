@@ -55,7 +55,10 @@ security headers. Model credentials are optional environment values and are abse
 Payment and operational events use separate Redis Streams under `amex:synthetic:*`. A consumer
 group validates each payload into its Pydantic contract and deduplicates by stable event ID before
 dispatch. Reset scans and deletes only that explicit synthetic namespace—never `FLUSHDB`, an
-unbounded wildcard, or unrelated keys.
+unbounded wildcard, or unrelated keys. The ingestion worker fences every batch with the synthetic
+runtime epoch. On an epoch transition it clears only ingestion-owned PostgreSQL projections,
+rebuilds an empty pipeline, and rechecks the epoch after processing so an in-flight pre-reset batch
+cannot restore an old active incident.
 
 The Redis server image is pinned to `redis:7.4.9-alpine`, a patched maintenance release. Security
 patch status takes priority over mechanically stepping back to a known-vulnerable server patch.
@@ -140,6 +143,9 @@ WebSocket messages are compact invalidations and REST remains authoritative.
 
 ## ID-016 — Copilot implementation limits
 
+The runtime limits in this historical decision are superseded by ID-023. The provider-neutral
+validation, safety and evaluation boundaries remain in force.
+
 The provider-neutral configuration is `copilot-config.v1` with balanced reasoning, 1,800 initial
 and 1,100 follow-up output-token ceilings, a 60,000-character context ceiling, 15-second call
 timeout, one temporary retry, one structured repair, four read-only tool calls and a three-failure/
@@ -199,3 +205,55 @@ review navigation preserves incident-list query state and highlights the updated
 saves preserve form input. The final locked frontend build passed, while npm reported three known
 transitive audit findings (one moderate, one high and one critical). No unreviewed automatic audit
 fix was applied because it could change the approved dependency graph.
+
+## ID-023 — Copilot incomplete-response handling
+
+OpenAI Responses counts reasoning tokens inside `max_output_tokens`. The original 1,800/1,100-token
+runtime ceilings could therefore end an otherwise successful request with `status=incomplete`
+before any structured report text was emitted. The adapter previously mislabelled that no-output
+terminal state as `schema_validation_failed`, and no raw report existed to repair or display.
+
+Runtime configuration is now `copilot-config.v2`, with balanced reasoning, 4,096 initial and 3,072
+follow-up output-token ceilings, and a 30-second call timeout. A token-limited incomplete response
+gets one bounded retry with a larger ceiling, capped at 8,192 tokens. A repeated incomplete response
+uses the truthful, retryable `provider_incomplete` fallback. Safe response identity and token-count
+metadata are retained for audit; provider content and credentials are not logged. The configuration
+version change also gives an existing evidence package a new automatic-report cache key after the
+API is rebuilt. The Copilot thread keeps status reconciliation active with bounded backoff until
+the interaction reaches a terminal state, retries transient status or transcript fetch failures,
+and cancels its poller when the view closes. Reports that outlast the former short direct-poll
+window therefore replace stale progress without requiring the tab or page to be reopened.
+
+## ID-024 — Redis cold-start readiness
+
+The named Redis volume can contain a sizeable append-only dataset after an extended simulator run.
+Redis CLI can return a `LOADING` error with a successful process exit while that dataset is being
+restored, so a health check that only executes `redis-cli ping` can falsely release Compose
+dependencies. The Redis health contract now requires the command output to equal `PONG` exactly.
+
+The simulator also treats Redis loading, connection and timeout errors during initialization as
+transient. It retries at most ten times with exponential backoff from 250 ms to a five-second cap,
+then re-raises the last error instead of hiding a persistent failure. No volume is reset and no
+synthetic runtime state is discarded. A cold rebuild against the existing 504 MB Redis dataset
+waited through a 26.9-second restore and then brought all six services to healthy state.
+
+## ID-025 — Canonical Copilot thread and approved tab refinement
+
+Each incident now has one persistence-enforced canonical Copilot thread and a complete ordered
+all-role transcript. PostgreSQL migration `003_copilot_threads.sql` is additive and idempotent;
+in-memory storage retains behavioral parity. The server chooses the lifecycle-permitted immutable
+evidence package at request acceptance, pins it through validation, preserves older answers against
+their original packages and inserts typed evidence-version notices. Incident ownership applies to
+messages, interactions, retries, feedback, references, citations and idempotent commands.
+
+Provider-neutral generation now emits a versioned human-oriented draft. Python derives qualitative
+confidence, validates all claims and values, hydrates exact-package numbered citations and persists
+either `copilot-answer.v2` or a deterministic fallback in one reserved response slot. Bounded model
+context uses a deterministic older-history digest labelled as untrusted plus recent and explicitly
+referenced messages; stored transcript history remains complete.
+
+ID-018 remains the historical Stage 8 consolidation record, but its Copilot split-pane placement is
+superseded by this decision only. The approved workspace uses
+`Summary | Timeline | Evidence | Copilot | Review`, keeps deterministic RCA prominent in Summary,
+and renders Copilot as a full-width transcript with a sticky composer. Shared tokens, themes,
+accessibility and desktop/laptop targets are unchanged. CP-39 and CP-42 remain critical.

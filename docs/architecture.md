@@ -18,8 +18,10 @@ Synthetic simulator -> Redis Streams -> typed ingestion -> event-time metrics
   exceed the producer clock.
 - Reset is a backend-authoritative, idempotent operation restricted to allowlisted synthetic
   PostgreSQL resources and `amex:synthetic:*` Redis keys. It preserves migrations, configuration,
-  runbooks, schemas and unrelated Redis keys. A fresh or reset system is genuinely empty and
-  `STOPPED`; demo fixtures are never projected into the live runtime.
+  runbooks, schemas and unrelated Redis keys. Runtime-epoch fencing makes the ingestion worker
+  discard projections from batches that overlap reset before it accepts traffic for the new run.
+  A fresh or reset system is genuinely empty and `STOPPED`; demo fixtures are never projected into
+  the live runtime.
 - Metrics use event-time buckets, non-overlapping current/healthy-baseline windows and explicit
   warming, stale, unknown and late-event states. Business declines never count as technical errors.
 - Detection combines statistical significance, practical effect, volume gates and persistence.
@@ -28,7 +30,7 @@ Synthetic simulator -> Redis Streams -> typed ingestion -> event-time metrics
   observed operational changes and preserves supporting, contradictory and missing evidence.
 - Evidence packages are immutable, versioned and semantically validated before projection.
 - PostgreSQL is authoritative for API projections, reviews, feedback, command idempotency,
-  Copilot audits, bounded pipeline checkpoints and WebSocket sequence numbers. Redis is the event
+  canonical Copilot threads/messages, immutable evidence packages, Copilot audits, bounded pipeline checkpoints and WebSocket sequence numbers. Redis is the event
   transport and stores the simulator's small restart checkpoint.
 - The ingestion worker acknowledges Redis entries only after a projection commit, claims abandoned
   pending entries after a bounded idle time, and restores event-time windows, lifecycle state,
@@ -40,15 +42,24 @@ Synthetic simulator -> Redis Streams -> typed ingestion -> event-time metrics
 
 ## Copilot boundary
 
-Python owns context construction, provider calls, read-only tool authorization, validation,
-persistence and delivery. The model receives only a bounded package projection, approved runbook
-sections, bounded recent history and explicitly labelled tool results. It has no database, Redis,
-raw-event, identity-selection or write/remediation access.
+Python owns context construction, lifecycle-aware package selection, provider calls, read-only tool
+authorization, validation, persistence and delivery. Each incident has one canonical thread. Every
+request pins the exact immutable evidence package selected at acceptance; earlier answers and their
+hydrated citations keep their historical package identity when the thread advances.
+
+The model receives only the pinned package projection, approved runbook sections, a deterministic
+older-history digest explicitly labelled as untrusted conversation context, bounded recent and
+explicitly referenced messages, and labelled tool results. The complete stored transcript is not
+truncated to meet model budgets. The model has no database, Redis, raw-event, identity-selection or
+write/remediation access.
 
 Provider output is held in a restricted audit field and never returned directly. Pydantic schema,
 incident/package ownership, citations, numerical assertions, deterministic leader/tier and policy
 checks must all pass. One repair is allowed; temporary provider calls retry once; then a circuit
-breaker and deterministic fallback preserve usability.
+breaker and deterministic fallback preserve usability. Validated answers and fallbacks occupy one
+idempotent assistant response slot per interaction, so reconnects and retries do not duplicate the
+transcript. Ownership checks apply to thread/message/interaction/retry/feedback/reference/citation
+operations and incident-scoped command keys.
 
 ## Scaling notes
 

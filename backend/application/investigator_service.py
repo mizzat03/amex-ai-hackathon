@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -15,9 +18,13 @@ from backend.application.live_updates import LiveUpdateBroker
 from backend.application.simulator_client import SimulatorTransportError
 from backend.config.settings import Settings
 from backend.contracts.api import (
+    CanonicalCopilotMessagePage,
     CopilotFeedbackRequest,
     CopilotInteractionView,
+    CopilotMessage,
     CopilotMessagePage,
+    CopilotThread,
+    CopilotThreadResponse,
     CopilotThreadSummary,
     CursorPage,
     DeterministicFallback,
@@ -34,17 +41,23 @@ from backend.contracts.api import (
     SimulationStatus,
     SubmitCopilotQueryRequest,
     SubmitCopilotQueryResponse,
+    SubmitCopilotMessageRequest,
+    SubmitCopilotMessageResponse,
     SystemOverviewResponse,
 )
 from backend.contracts.enums import IncidentSeverity, MetricKey, SimulationAction
 from backend.copilot.models import CopilotContext
 from backend.copilot.orchestrator import CopilotOrchestrator
+from backend.copilot.prompts import build_history_digest
+from backend.evidence.builder import EvidenceBuilder, EvidencePackage
 from backend.evidence.runbooks import RunbookRepository
 from backend.persistence.runtime_store import RuntimeStore
 
 
 class Simulator(Protocol):
     SCENARIO_ID: str
+
+    async def status(self) -> SimulationStatus: ...
 
     async def start(self, client_request_id: str) -> SimulationStatus: ...
 
@@ -93,22 +106,35 @@ class InvestigatorService:
         self._mutation_lock = asyncio.Lock()
         self._copilot_tasks: set[asyncio.Task[None]] = set()
 
-    async def initialize(self) -> None:
-        await self.store.migrate()
-        if await self.store.get_resource("overview", "current") is not None:
-            return
-        projection = build_clean_projection(settings=self.settings)
-        await self.store.put_resource(
-            "overview", "current", projection.overview.model_dump(mode="json")
-        )
-        await self.store.put_resource(
-            "metric_history",
-            MetricKey.TECHNICAL_ERROR_RATE.value,
-            projection.history.model_dump(mode="json"),
-        )
-        await self.store.put_resource(
-            "simulation", "current", projection.simulation.model_dump(mode="json")
-        )
+    async def initialize(self, *, migrate: bool = True) -> None:
+        if migrate:
+            await self.store.migrate()
+        projection = None
+        overview = await self.store.get_resource("overview", "current")
+        if overview is None:
+            projection = build_clean_projection(settings=self.settings)
+            await self.store.put_resource(
+                "overview", "current", projection.overview.model_dump(mode="json")
+            )
+            await self.store.put_resource(
+                "metric_history",
+                MetricKey.TECHNICAL_ERROR_RATE.value,
+                projection.history.model_dump(mode="json"),
+            )
+        else:
+            if "telemetry_stale_after_seconds" not in overview:
+                overview = {
+                    **overview,
+                    "telemetry_stale_after_seconds": (
+                        self.settings.telemetry_stale_after_seconds if self.settings else 30
+                    ),
+                }
+                await self.store.put_resource("overview", "current", overview)
+        if await self.store.get_resource("simulation", "current") is None:
+            projection = projection or build_clean_projection(settings=self.settings)
+            await self.store.put_resource(
+                "simulation", "current", projection.simulation.model_dump(mode="json")
+            )
 
     async def wait_for_copilot_tasks(self) -> None:
         """Drain bounded background work during tests and graceful application shutdown."""
@@ -241,6 +267,255 @@ class InvestigatorService:
             source_references=[item.stable_logical_key],
         )
 
+    async def select_copilot_evidence_package(self, incident_id: str) -> dict[str, Any]:
+        """Resolve one eligible incident-owned immutable package for a new request."""
+        workspace = await self.incident(incident_id)
+        current = await self.store.get_evidence_package(
+            incident_id,
+            workspace.evidence_package_id,
+            workspace.evidence_package_version,
+        )
+        if current is None:
+            projected = await self.store.get_resource("evidence", incident_id)
+            if projected is not None:
+                current = {
+                    **projected,
+                    "package_version": projected["evidence_package_version"],
+                    "schema_version": "evidence-package.v1",
+                    "builder_configuration_version": "legacy-projection",
+                }
+        eligible = {"COMPLETE", "PARTIAL"}
+        lifecycle = workspace.incident.lifecycle
+        if lifecycle in {"OPEN", "RECOVERY_CANDIDATE"} and current is not None:
+            if current.get("completeness") in eligible:
+                return current
+        latest = await self.store.get_latest_evidence_package(incident_id)
+        if latest is not None:
+            return latest
+        if current is not None and current.get("completeness") in eligible:
+            return current
+        raise ServiceError(
+            409,
+            "COPILOT_UNAVAILABLE",
+            "No eligible evidence package is available for this incident",
+        )
+
+    async def copilot_thread(self, incident_id: str) -> CopilotThreadResponse:
+        await self.incident(incident_id)
+        thread_payload = await self.store.get_or_create_copilot_thread(
+            incident_id, datetime.now(UTC)
+        )
+        rows, next_sequence = await self.store.list_copilot_messages(
+            thread_payload["thread_id"],
+            incident_id,
+            after_sequence=None,
+            limit=50,
+        )
+        return CopilotThreadResponse(
+            thread=CopilotThread.model_validate(
+                {
+                    key: value
+                    for key, value in thread_payload.items()
+                    if key != "history_digest"
+                }
+            ),
+            messages=CanonicalCopilotMessagePage(
+                items=[CopilotMessage.model_validate(row) for row in rows],
+                next_cursor=(
+                    self._encode_copilot_cursor(thread_payload["thread_id"], next_sequence)
+                    if next_sequence is not None
+                    else None
+                ),
+            ),
+        )
+
+    async def canonical_copilot_messages(
+        self, incident_id: str, cursor: str | None = None
+    ) -> CanonicalCopilotMessagePage:
+        await self.incident(incident_id)
+        thread = await self.store.get_or_create_copilot_thread(incident_id, datetime.now(UTC))
+        after_sequence = (
+            self._decode_copilot_cursor(cursor, thread["thread_id"])
+            if cursor
+            else None
+        )
+        rows, next_sequence = await self.store.list_copilot_messages(
+            thread["thread_id"],
+            incident_id,
+            after_sequence=after_sequence,
+            limit=50,
+        )
+        return CanonicalCopilotMessagePage(
+            items=[CopilotMessage.model_validate(row) for row in rows],
+            next_cursor=(
+                self._encode_copilot_cursor(thread["thread_id"], next_sequence)
+                if next_sequence is not None
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _encode_copilot_cursor(thread_id: str, sequence: int) -> str:
+        raw = json.dumps(
+            {"thread_id": thread_id, "after_sequence": sequence},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    @staticmethod
+    def _decode_copilot_cursor(cursor: str, expected_thread_id: str) -> int:
+        try:
+            padding = "=" * (-len(cursor) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
+            if (
+                not isinstance(payload, dict)
+                or payload.get("thread_id") != expected_thread_id
+                or not isinstance(payload.get("after_sequence"), int)
+                or payload["after_sequence"] < 1
+            ):
+                raise ValueError("invalid cursor payload")
+            return int(payload["after_sequence"])
+        except (ValueError, TypeError, json.JSONDecodeError, binascii.Error) as exc:
+            raise ServiceError(
+                422, "VALIDATION_ERROR", "The supplied Copilot cursor is invalid"
+            ) from exc
+
+    async def submit_copilot_message(
+        self, incident_id: str, request: SubmitCopilotMessageRequest
+    ) -> SubmitCopilotMessageResponse:
+        async with self._mutation_lock:
+            thread_view = await self.copilot_thread(incident_id)
+            thread = thread_view.thread
+            command_scope = f"copilot-message:{incident_id}:{thread.thread_id}"
+            cached = await self.store.get_command(command_scope, request.client_request_id)
+            if cached is not None:
+                return SubmitCopilotMessageResponse.model_validate(cached)
+
+            for message_id in request.referenced_message_ids:
+                referenced = await self.store.get_copilot_message(incident_id, message_id)
+                if referenced is None or referenced["thread_id"] != thread.thread_id:
+                    raise ServiceError(
+                        422,
+                        "VALIDATION_ERROR",
+                        "A referenced Copilot message is not part of this incident thread",
+                    )
+
+            package = await self.select_copilot_evidence_package(incident_id)
+            package_id = str(package["evidence_package_id"])
+            package_version = int(
+                package.get("package_version", package.get("evidence_package_version"))
+            )
+            accepted_at = datetime.now(UTC)
+            interaction_id = f"int_{uuid4().hex}"
+            user_message_id = f"msg_{uuid4().hex}"
+            transition_message: dict[str, Any] | None = None
+            if (
+                thread.latest_evidence_package_id is not None
+                and thread.latest_evidence_package_version is not None
+                and (
+                    thread.latest_evidence_package_id != package_id
+                    or thread.latest_evidence_package_version != package_version
+                )
+            ):
+                transition_key = (
+                    f"{thread.thread_id}:{thread.latest_evidence_package_id}:"
+                    f"{thread.latest_evidence_package_version}:{package_id}:{package_version}"
+                )
+                transition_message = {
+                    "message_id": (
+                        "msg_notice_" + sha256(transition_key.encode()).hexdigest()[:24]
+                    ),
+                    "role": "SYSTEM",
+                    "content_type": "EVIDENCE_VERSION_NOTICE",
+                    "content": {
+                        "type": "EVIDENCE_VERSION_NOTICE",
+                        "previous_evidence_package_id": thread.latest_evidence_package_id,
+                        "previous_evidence_package_version": (
+                            thread.latest_evidence_package_version
+                        ),
+                        "evidence_package_id": package_id,
+                        "evidence_package_version": package_version,
+                        "summary": (
+                            "Newer incident evidence is available. New answers use the "
+                            "updated snapshot; earlier answers keep their original evidence."
+                        ),
+                    },
+                    "created_at": accepted_at,
+                }
+            user_message = {
+                "message_id": user_message_id,
+                "role": "USER",
+                "content_type": "USER_QUESTION",
+                "content": {
+                    "type": "USER_QUESTION",
+                    "question": request.question.strip(),
+                    "referenced_message_ids": request.referenced_message_ids,
+                },
+                "client_request_id": request.client_request_id,
+                "created_at": accepted_at,
+            }
+            interaction = CopilotInteractionView(
+                interaction_id=interaction_id,
+                incident_id=incident_id,
+                thread_id=thread.thread_id,
+                status="QUEUED",
+                progress_stage="QUEUED",
+                progress_updated_at=accepted_at,
+                retry=RetryState(
+                    eligible=False, unavailable_reason="Interaction is still queued"
+                ),
+            )
+            response = SubmitCopilotMessageResponse(
+                interaction_id=interaction_id,
+                thread_id=thread.thread_id,
+                user_message_id=user_message_id,
+                accepted_at=accepted_at,
+                evidence_package_id=package_id,
+                evidence_package_version=package_version,
+            )
+            accepted_payload = await self.store.accept_copilot_request(
+                thread_id=thread.thread_id,
+                incident_id=incident_id,
+                command_scope=command_scope,
+                client_request_id=request.client_request_id,
+                user_message=user_message,
+                transition_message=transition_message,
+                interaction=interaction.model_dump(mode="json"),
+                request_record={
+                    "incident_id": incident_id,
+                    "thread_id": thread.thread_id,
+                    "user_message_id": user_message_id,
+                    "question": request.question.strip(),
+                    "referenced_message_ids": request.referenced_message_ids,
+                    "evidence_package_id": package_id,
+                    "evidence_package_version": package_version,
+                },
+                response=response.model_dump(mode="json"),
+                evidence_package_id=package_id,
+                evidence_package_version=package_version,
+                updated_at=accepted_at,
+            )
+            response = SubmitCopilotMessageResponse.model_validate(accepted_payload)
+            newly_accepted = response.interaction_id == interaction_id
+            if newly_accepted:
+                await self.broker.publish(
+                    "copilot.progress.updated",
+                    {
+                        "incident_id": incident_id,
+                        "interaction_id": interaction_id,
+                        "stage": "QUEUED",
+                    },
+                )
+            if self.copilot is not None and newly_accepted:
+                task = asyncio.create_task(
+                    self._run_copilot(interaction_id, incident_id, request.question.strip()),
+                    name=f"copilot-{interaction_id}",
+                )
+                self._copilot_tasks.add(task)
+                task.add_done_callback(self._copilot_tasks.discard)
+            return response
+
     async def copilot_messages(self, incident_id: str) -> CopilotMessagePage:
         await self.incident(incident_id)
         return CopilotMessagePage.model_validate(
@@ -250,60 +525,19 @@ class InvestigatorService:
     async def submit_copilot_query(
         self, incident_id: str, request: SubmitCopilotQueryRequest
     ) -> SubmitCopilotQueryResponse:
-        workspace = await self.incident(incident_id)
-        if (
-            request.evidence_package_id != workspace.evidence_package_id
-            or request.evidence_package_version != workspace.evidence_package_version
-        ):
-            raise ServiceError(
-                409, "VERSION_CONFLICT", "The evidence package version is no longer active"
-            )
-        cached = await self.store.get_command("copilot-query", request.client_request_id)
-        if cached:
-            return SubmitCopilotQueryResponse.model_validate(cached)
-        accepted_at = datetime.now(UTC)
-        interaction_id = f"int_{uuid4().hex}"
-        interaction = CopilotInteractionView(
-            interaction_id=interaction_id,
-            status="QUEUED",
-            progress_stage="QUEUED",
-            progress_updated_at=accepted_at,
-            retry=RetryState(eligible=False, unavailable_reason="Interaction is still queued"),
+        accepted = await self.submit_copilot_message(
+            incident_id,
+            SubmitCopilotMessageRequest(
+                question=request.question,
+                client_request_id=request.client_request_id,
+            ),
         )
-        response = SubmitCopilotQueryResponse(
-            interaction_id=interaction_id,
-            accepted_at=accepted_at,
-            evidence_package_id=request.evidence_package_id,
-            evidence_package_version=request.evidence_package_version,
+        return SubmitCopilotQueryResponse(
+            interaction_id=accepted.interaction_id,
+            accepted_at=accepted.accepted_at,
+            evidence_package_id=accepted.evidence_package_id,
+            evidence_package_version=accepted.evidence_package_version,
         )
-        await self.store.put_resource(
-            "copilot_interaction", interaction_id, interaction.model_dump(mode="json")
-        )
-        await self.store.put_command(
-            "copilot-query", request.client_request_id, response.model_dump(mode="json")
-        )
-        await self.broker.publish(
-            "copilot.progress.updated",
-            {"incident_id": incident_id, "interaction_id": interaction_id, "stage": "QUEUED"},
-        )
-        await self.store.put_resource(
-            "copilot_request",
-            interaction_id,
-            {
-                "incident_id": incident_id,
-                "question": request.question,
-                "evidence_package_id": request.evidence_package_id,
-                "evidence_package_version": request.evidence_package_version,
-            },
-        )
-        if self.copilot is not None:
-            task = asyncio.create_task(
-                self._run_copilot(interaction_id, incident_id, request.question),
-                name=f"copilot-{interaction_id}",
-            )
-            self._copilot_tasks.add(task)
-            task.add_done_callback(self._copilot_tasks.discard)
-        return response
 
     async def request_initial_copilot_report(self, incident_id: str) -> CopilotInteractionView:
         """Idempotently queue the automatic first thread message for a pinned package/config."""
@@ -311,9 +545,15 @@ class InvestigatorService:
             raise ServiceError(503, "COPILOT_UNAVAILABLE", "Copilot orchestration is unavailable")
         async with self._mutation_lock:
             workspace = await self.incident(incident_id)
+            thread = (await self.copilot_thread(incident_id)).thread
+            package = await self.select_copilot_evidence_package(incident_id)
+            package_id = str(package["evidence_package_id"])
+            package_version = int(
+                package.get("package_version", package.get("evidence_package_version"))
+            )
             cache_material = (
-                f"{incident_id}:{workspace.evidence_package_id}:"
-                f"{workspace.evidence_package_version}:{self.copilot.configuration.version}"
+                f"{incident_id}:{thread.thread_id}:{package_id}:"
+                f"{package_version}:{self.copilot.configuration.version}"
             )
             interaction_id = f"int_initial_{sha256(cache_material.encode()).hexdigest()[:24]}"
             existing = await self.store.get_resource("copilot_interaction", interaction_id)
@@ -321,6 +561,8 @@ class InvestigatorService:
                 return CopilotInteractionView.model_validate(existing)
             queued = CopilotInteractionView(
                 interaction_id=interaction_id,
+                incident_id=incident_id,
+                thread_id=thread.thread_id,
                 status="QUEUED",
                 progress_stage="QUEUED",
                 progress_updated_at=datetime.now(UTC),
@@ -334,10 +576,25 @@ class InvestigatorService:
                 interaction_id,
                 {
                     "incident_id": incident_id,
+                    "thread_id": thread.thread_id,
+                    "user_message_id": None,
                     "question": None,
-                    "evidence_package_id": workspace.evidence_package_id,
-                    "evidence_package_version": workspace.evidence_package_version,
+                    "referenced_message_ids": [],
+                    "evidence_package_id": package_id,
+                    "evidence_package_version": package_version,
                 },
+            )
+            await self.store.update_copilot_thread(
+                thread.thread_id,
+                incident_id,
+                history_digest=(
+                    (await self.store.get_copilot_thread(incident_id) or {}).get(
+                        "history_digest", {}
+                    )
+                ),
+                evidence_package_id=package_id,
+                evidence_package_version=package_version,
+                updated_at=datetime.now(UTC),
             )
             await self._update_copilot_summary(incident_id, queued)
             task = asyncio.create_task(
@@ -352,11 +609,27 @@ class InvestigatorService:
         self, incident_id: str, interaction_id: str
     ) -> CopilotInteractionView:
         await self.incident(incident_id)
-        return CopilotInteractionView.model_validate(
-            await self._required(
-                "copilot_interaction", interaction_id, "Copilot interaction was not found"
-            )
+        payload = await self._required(
+            "copilot_interaction", interaction_id, "Copilot interaction was not found"
         )
+        owner = payload.get("incident_id")
+        if owner is None:
+            request = await self.store.get_resource("copilot_request", interaction_id)
+            owner = request.get("incident_id") if request else None
+        if owner is None:
+            legacy = await self.store.get_resource("copilot_messages", incident_id)
+            if not any(
+                item.get("interaction_id") == interaction_id
+                for item in (legacy or {}).get("items", [])
+            ):
+                raise ServiceError(
+                    404, "RESOURCE_NOT_FOUND", "Copilot interaction was not found"
+                )
+        elif owner != incident_id:
+            raise ServiceError(
+                404, "RESOURCE_NOT_FOUND", "Copilot interaction was not found"
+            )
+        return CopilotInteractionView.model_validate(payload)
 
     async def retry_copilot(self, incident_id: str, interaction_id: str) -> CopilotInteractionView:
         interaction = await self.copilot_interaction(incident_id, interaction_id)
@@ -409,6 +682,8 @@ class InvestigatorService:
             async def progress(stage: str) -> None:
                 current = CopilotInteractionView(
                     interaction_id=interaction_id,
+                    incident_id=incident_id,
+                    thread_id=context.thread_id,
                     status="IN_PROGRESS",
                     progress_stage=stage,
                     progress_updated_at=datetime.now(UTC),
@@ -436,13 +711,6 @@ class InvestigatorService:
                         )
                     }
                 )
-            await self.store.put_resource(
-                "copilot_interaction",
-                interaction_id,
-                interaction.model_dump(mode="json"),
-            )
-            if question is None:
-                await self._update_copilot_summary(incident_id, interaction)
             validated = result.message.model_dump(mode="json") if result.message else None
             await self.store.save_copilot_interaction(
                 result.audit.model_dump(mode="json"), result.raw_output, validated
@@ -463,37 +731,110 @@ class InvestigatorService:
                         "payload": tool_result.payload,
                     },
                 )
+            request = await self._required(
+                "copilot_request", interaction_id, "Original Copilot request was not found"
+            )
+            response_message_id = (
+                "msg_response_" + sha256(interaction_id.encode()).hexdigest()[:24]
+            )
             if result.message is not None:
-                page = await self.copilot_messages(incident_id)
-                items = [
-                    item for item in page.items if item.message_id != result.message.message_id
-                ]
-                items.append(result.message)
-                updated_page = CopilotMessagePage(items=items[-8:], next_cursor=None)
-                await self.store.put_resource(
-                    "copilot_messages", incident_id, updated_page.model_dump(mode="json")
+                stored = await self.store.upsert_copilot_response(
+                    context.thread_id or str(request["thread_id"]),
+                    incident_id,
+                    {
+                        "message_id": response_message_id,
+                        "role": "ASSISTANT",
+                        "content_type": "COPILOT_ANSWER",
+                        "content": result.message.model_dump(mode="json"),
+                        "interaction_id": interaction_id,
+                        "response_to_message_id": request.get("user_message_id"),
+                        "evidence_package_id": context.evidence_package_id,
+                        "evidence_package_version": context.evidence_package_version,
+                        "created_at": datetime.now(UTC),
+                    },
+                )
+                interaction = interaction.model_copy(
+                    update={"validated_message_id": stored["message_id"]}
                 )
                 await self.broker.publish(
                     "copilot.message.validated",
                     {
                         "incident_id": incident_id,
                         "interaction_id": interaction_id,
-                        "message_id": result.message.message_id,
+                        "message_id": stored["message_id"],
                     },
                 )
             else:
+                fallback = interaction.deterministic_fallback or fallback_for(
+                    "unexpected_internal_failure"
+                )
+                await self.store.upsert_copilot_response(
+                    context.thread_id or str(request["thread_id"]),
+                    incident_id,
+                    {
+                        "message_id": response_message_id,
+                        "role": "ASSISTANT",
+                        "content_type": "DETERMINISTIC_FALLBACK",
+                        "content": {
+                            "type": "DETERMINISTIC_FALLBACK",
+                            "label": "Deterministic fallback",
+                            "summary": fallback.summary,
+                            "reason_code": fallback.reason_code,
+                            "retry_eligible": interaction.retry.eligible,
+                        },
+                        "interaction_id": interaction_id,
+                        "response_to_message_id": request.get("user_message_id"),
+                        "evidence_package_id": context.evidence_package_id,
+                        "evidence_package_version": context.evidence_package_version,
+                        "created_at": datetime.now(UTC),
+                    },
+                )
                 await self.broker.publish(
                     "copilot.fallback.ready",
                     {"incident_id": incident_id, "interaction_id": interaction_id},
                 )
+            await self.store.put_resource(
+                "copilot_interaction",
+                interaction_id,
+                interaction.model_dump(mode="json"),
+            )
+            if question is None:
+                await self._update_copilot_summary(incident_id, interaction)
         except Exception:
+            request = await self.store.get_resource("copilot_request", interaction_id) or {}
+            fallback = fallback_for("unexpected_internal_failure")
             failed = CopilotInteractionView(
                 interaction_id=interaction_id,
-                status="FAILED",
+                incident_id=incident_id,
+                thread_id=request.get("thread_id"),
+                status="FALLBACK",
                 progress_updated_at=datetime.now(UTC),
-                deterministic_fallback=fallback_for("ORCHESTRATION_FAILURE"),
+                deterministic_fallback=fallback,
                 retry=RetryState(eligible=True, unavailable_reason="One manual retry is available"),
             )
+            if request.get("thread_id") is not None:
+                await self.store.upsert_copilot_response(
+                    str(request["thread_id"]),
+                    incident_id,
+                    {
+                        "message_id": "msg_response_"
+                        + sha256(interaction_id.encode()).hexdigest()[:24],
+                        "role": "ASSISTANT",
+                        "content_type": "DETERMINISTIC_FALLBACK",
+                        "content": {
+                            "type": "DETERMINISTIC_FALLBACK",
+                            "label": "Deterministic fallback",
+                            "summary": fallback.summary,
+                            "reason_code": fallback.reason_code,
+                            "retry_eligible": True,
+                        },
+                        "interaction_id": interaction_id,
+                        "response_to_message_id": request.get("user_message_id"),
+                        "evidence_package_id": request.get("evidence_package_id"),
+                        "evidence_package_version": request.get("evidence_package_version"),
+                        "created_at": datetime.now(UTC),
+                    },
+                )
             await self.store.put_resource(
                 "copilot_interaction", interaction_id, failed.model_dump(mode="json")
             )
@@ -507,24 +848,83 @@ class InvestigatorService:
     async def _copilot_context(
         self, interaction_id: str, incident_id: str, question: str | None
     ) -> CopilotContext:
+        request = await self._required(
+            "copilot_request", interaction_id, "Original Copilot request was not found"
+        )
+        if request.get("incident_id") != incident_id:
+            raise ServiceError(404, "RESOURCE_NOT_FOUND", "Copilot request was not found")
         workspace = await self.incident(incident_id)
-        evidence = await self.evidence(incident_id)
-        leading = workspace.rca_summary.leading_hypothesis
-        alternatives = workspace.rca_summary.alternatives
+        package_id = str(request["evidence_package_id"])
+        package_version = int(request["evidence_package_version"])
+        package_payload = await self.store.get_evidence_package(
+            incident_id, package_id, package_version
+        )
+        if package_payload is None:
+            raise ServiceError(
+                409,
+                "COPILOT_UNAVAILABLE",
+                "The pinned evidence package is unavailable",
+            )
+        if "evidence_catalogue" in package_payload:
+            evidence = EvidenceBuilder(self.settings or Settings()).dashboard_projection(
+                EvidencePackage.model_validate(package_payload)
+            )
+        else:
+            evidence = EvidenceProjectionResponse.model_validate(
+                {
+                    key: value
+                    for key, value in package_payload.items()
+                    if key in EvidenceProjectionResponse.model_fields
+                }
+            )
+        if (
+            evidence.incident_id != incident_id
+            or evidence.evidence_package_id != package_id
+            or evidence.evidence_package_version != package_version
+        ):
+            raise ServiceError(
+                409,
+                "COPILOT_UNAVAILABLE",
+                "The pinned evidence package failed ownership validation",
+            )
+        leading = next((item for item in evidence.hypotheses if item.is_leading), None)
+        alternatives = [item for item in evidence.hypotheses if not item.is_leading]
         runbooks = RunbookRepository.from_directory(
             Path(__file__).resolve().parents[2] / "runbooks"
         ).search({"token-validation", "deployment", "gateway"}, limit=3)
-        messages = await self.copilot_messages(incident_id)
+        thread = await self.store.get_copilot_thread(incident_id)
+        if thread is None:
+            thread = await self.store.get_or_create_copilot_thread(incident_id, datetime.now(UTC))
+        rows, _ = await self.store.list_copilot_messages(
+            thread["thread_id"], incident_id, after_sequence=None, limit=100
+        )
+        digest = build_history_digest(rows, recent_limit=8)
+        await self.store.update_copilot_thread(
+            thread["thread_id"],
+            incident_id,
+            history_digest=digest,
+            evidence_package_id=package_id,
+            evidence_package_version=package_version,
+            updated_at=datetime.now(UTC),
+        )
+        referenced_ids = set(request.get("referenced_message_ids", []))
         return CopilotContext(
-            mode="FOLLOW_UP" if question else "INITIAL_ANALYSIS",
+            mode="FOLLOW_UP" if request.get("question") is not None else "INITIAL_ANALYSIS",
             interaction_id=interaction_id,
             incident_id=incident_id,
-            question=question,
+            thread_id=thread["thread_id"],
+            question=(
+                str(request["question"])
+                if request.get("question") is not None
+                else question
+            ),
             evidence_package_id=evidence.evidence_package_id,
             evidence_package_version=evidence.evidence_package_version,
             evidence_completeness=evidence.completeness.value,
             leading_hypothesis_id=leading.hypothesis_id if leading else None,
-            evidence_tier=workspace.rca_summary.overall_tier,
+            evidence_tier=(
+                leading.evidence_tier if leading else workspace.rca_summary.overall_tier
+            ),
             strongest_alternative_id=alternatives[0].hypothesis_id if alternatives else None,
             evidence_items=[item.model_dump(mode="json") for item in evidence.items],
             citation_manifest=[
@@ -539,7 +939,11 @@ class InvestigatorService:
                 }
                 for section in runbooks
             ],
-            recent_history=[item.model_dump(mode="json") for item in messages.items[-8:]],
+            history_digest=digest,
+            recent_history=rows[-8:],
+            referenced_history=[
+                row for row in rows if row["message_id"] in referenced_ids
+            ][:8],
         )
 
     async def update_human_review(
@@ -606,14 +1010,21 @@ class InvestigatorService:
             return updated
 
     async def submit_feedback(
-        self, message_id: str, request: CopilotFeedbackRequest
+        self,
+        message_id: str,
+        request: CopilotFeedbackRequest,
+        incident_id: str | None = None,
     ) -> ResourceVersion:
-        messages = await self.store.list_resources("copilot_messages")
-        known = any(
-            message.get("message_id") == message_id
-            for page in messages
-            for message in page.get("items", [])
-        )
+        if incident_id is not None:
+            await self.incident(incident_id)
+            known = await self.store.get_copilot_message(incident_id, message_id) is not None
+        else:
+            messages = await self.store.list_resources("copilot_messages")
+            known = any(
+                message.get("message_id") == message_id
+                for page in messages
+                for message in page.get("items", [])
+            )
         if not known:
             raise ServiceError(404, "RESOURCE_NOT_FOUND", "Copilot message was not found")
         key = f"{message_id}:latest"
@@ -624,15 +1035,31 @@ class InvestigatorService:
             **request.model_dump(mode="json"),
             **result.model_dump(mode="json"),
             "message_id": message_id,
+            "incident_id": incident_id,
         }
         await self.store.put_resource("copilot_feedback", key, payload, version)
         await self.store.save_feedback(message_id, version, payload)
         return result
 
     async def simulation_status(self) -> SimulationStatus:
-        return SimulationStatus.model_validate(
-            await self._required("simulation", "current", "Simulation status is unavailable")
+        payload = await self.store.get_resource("simulation", "current")
+        if payload is not None:
+            return SimulationStatus.model_validate(payload)
+        if self.simulator is None:
+            raise ServiceError(404, "RESOURCE_NOT_FOUND", "Simulation status is unavailable")
+        try:
+            status = await self.simulator.status()
+        except SimulatorTransportError as exc:
+            raise ServiceError(
+                503,
+                "DEPENDENCY_UNAVAILABLE",
+                str(exc),
+                retryable=True,
+            ) from exc
+        await self.store.put_resource(
+            "simulation", "current", status.model_dump(mode="json")
         )
+        return status
 
     async def simulation_command(
         self,
@@ -673,7 +1100,7 @@ class InvestigatorService:
                     )
                 result = await self.simulator.reset(client_request_id, confirmation)
                 await self.store.reset_synthetic_data()
-                await self.initialize()
+                await self.initialize(migrate=False)
                 if self.runtime_reset is not None:
                     await self.runtime_reset()
             else:

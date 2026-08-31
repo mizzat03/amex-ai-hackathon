@@ -1,37 +1,122 @@
-plan.md
-AMEX-Incident-Investigator-Planning-Context.md
-AMEX-Incident-Investigator-Decision-Register.md
-AMEX-Incident-Investigator-Master-Codex-Prompt.md
-AMEX-Incident-Investigator-Frontend-Plan.md
-frontend-backend-contract.md
+# Local collaboration and planning documents
+/plan.md
+/AMEX-Incident-Investigator-Decision-Register.md
+/AMEX-Incident-Investigator-Frontend-Plan.md
+/AMEX-Incident-Investigator-Master-Codex-Prompt.md
+/AMEX-Incident-Investigator-Planning-Context.md
+/frontend-backend-contract.md
+/specs/**/context.md
+/specs/**/plan.md
 
-# Local secrets and runtime state
+# Environment, secrets, and local credentials
 .env
 .env.*
 !.env.example
+!.env.*.example
+.envrc
+.direnv/
+/credentials/
+/provider-credentials/
 *.pem
 *.key
-*.crt
+*.p12
+*.pfx
 
-# Python
+# Python environments, bytecode, and package output
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+*$py.class
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Python tooling, tests, and coverage
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.pyright/
+.hypothesis/
+.tox/
+.nox/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
+junit.xml
 
-# Node / Next.js / browser tests
+# Node.js and Next.js dependencies, builds, caches, and logs
 node_modules/
-frontend/node_modules/
-frontend/.next/
-frontend/out/
-frontend/test-results/
-frontend/playwright-report/
+.next/
+out/
+.npm/
+.eslintcache
+.stylelintcache
+.vite/
+.vitest/
+*.tsbuildinfo
+coverage/
+.nyc_output/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# Local data and generated runtime artefacts
-data/
-*.db
-*.sqlite3
-logs/
+# Browser-test output
+test-results/
+playwright-report/
+blob-report/
+/cypress/screenshots/
+/cypress/videos/
+/cypress/downloads/
+
+# Docker overrides and local service state
+docker-compose.override.yml
+docker-compose.override.yaml
+compose.override.yml
+compose.override.yaml
+/.docker-data/
+/postgres-data/
+/redis-data/
+
+# Local code-analysis and generated tool state
+/.csg/
+/.csg-python-bootstrap/
+
+# Temporary files, screenshots, and render output
+/tmp/
+/temp/
+/debug/
+/render-output/
+/screenshots/generated/
+/screenshots/tmp/
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# IDE and editor metadata
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/tasks.json
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Operating-system metadata
+.DS_Store
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
